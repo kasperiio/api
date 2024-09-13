@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: electricity-price-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENTSOE_API_KEY=API_KEY_HERE
+      - TZ=Europe/Helsinki
+    volumes:
+      - ./data:/app/data
