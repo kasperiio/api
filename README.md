@@ -10,6 +10,7 @@ This application provides API for different usecases (Electricity).
 - Fetch missing data from an external source (ENTSO-E API).
 - Find the cheapest consecutive or non-consecutive hours.
 - Find the current price.
+- Calculate the hourly price ratio to daily average
 
 ## Installation
 
@@ -22,7 +23,7 @@ This application provides API for different usecases (Electricity).
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/kasperi-io/api.git
+    git clone https://github.com/kasperiio/api.git
     cd api
     ```
 
