@@ -35,9 +35,7 @@ class ElectricityPrice(Base):
 
     @hybrid_property
     def price_daily_average_ratio(self):
-        tz = pytz.timezone(os.getenv("TZ", "UTC"))  # noqa: F821
-        local_dt = self.timestamp.replace(tzinfo=pytz.UTC).astimezone(tz)
-        day_start = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = self.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
 
         session = Session.object_session(self)
