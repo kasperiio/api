@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/kasperiio/api/compare/v0.0.4...v0.0.5) (2024-09-24)
+
+
+### Bug Fixes
+
+* docker publish, hopefully? ([eb03af1](https://github.com/kasperiio/api/commit/eb03af1e16315c1354f6fcb39d70ee6aa85800c4))
+
 ## [0.0.4](https://github.com/kasperiio/api/compare/v0.0.3...v0.0.4) (2024-09-23)
 
 
