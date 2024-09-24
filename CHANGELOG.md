@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.4](https://github.com/kasperiio/api/compare/v0.0.3...v0.0.4) (2024-09-23)
+
+
+### Bug Fixes
+
+* faulty logic in ratio property ([c4158c9](https://github.com/kasperiio/api/commit/c4158c90461c6044fe4ec958b8d165fe77e49f54))
+
 ## [0.0.3](https://github.com/kasperiio/api/compare/v0.0.2...v0.0.3) (2024-09-23)
 
 
