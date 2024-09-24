@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.6](https://github.com/kasperiio/api/compare/v0.0.5...v0.0.6) (2024-09-24)
+
+
+### Bug Fixes
+
+* use workflow dispatch to trigger docker build ([2d056b3](https://github.com/kasperiio/api/commit/2d056b393b710cce5682968169d32eddbcd8517c))
+
 ## [0.0.5](https://github.com/kasperiio/api/compare/v0.0.4...v0.0.5) (2024-09-24)
 
 
