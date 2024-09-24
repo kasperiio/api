@@ -41,7 +41,9 @@ def get_electricity_price(
     ),
     db: Session = Depends(get_db),
 ):
-
+    """
+        Fetches electricity prices for a given time period.
+    """
     # Convert the input dates timezones to UTC
     start_date_dt = convert_date_tz(start_date)
     end_date_dt = convert_date_tz(end_date)
@@ -61,6 +63,9 @@ def get_electricity_price(
 def get_current_electricity_price(
     db: Session = Depends(get_db),
 ):
+    """
+        Fetches the current electricity price.
+    """
     # Fetch the current date and hour
     current_datetime = datetime.now(pytz.utc)
 
@@ -79,6 +84,9 @@ def get_cheapest_hours_today(
     consecutive: bool = Query(False, description="Should the hours be consecutive"),
     db: Session = Depends(get_db),
 ):
+    """
+        Fetches the cheapest electricity prices for a given amount.
+    """
     if amount > 24 or amount < 1:
         raise HTTPException(status_code=400, detail="Amount must be between 1 and 24")
 
