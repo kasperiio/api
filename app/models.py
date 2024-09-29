@@ -36,11 +36,11 @@ class ElectricityPrice(Base):
     @hybrid_property
     def price_daily_average_ratio(self):
         day_start = self.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
+        day_end = day_start + timedelta(hours=23)
 
         session = Session.object_session(self)
         if session is None:
-            return None
+            return 1
 
         day_prices = session.query(ElectricityPrice).filter(
             ElectricityPrice.timestamp >= day_start.astimezone(pytz.UTC),
@@ -48,10 +48,10 @@ class ElectricityPrice(Base):
         ).all()
 
         if not day_prices:
-            return None
+            return 1
 
         day_average = sum(p.price for p in day_prices) / len(day_prices)
-        return self.price / day_average if day_average else None
+        return self.price / day_average if day_average else 1
 
     @price_daily_average_ratio.expression
     def price_daily_average_ratio(cls):
