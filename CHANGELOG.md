@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.7](https://github.com/kasperiio/api/compare/v0.0.6...v0.0.7) (2024-10-04)
+
+
+### Bug Fixes
+
+* get namespace dynamically from entso-e response ([a48ff07](https://github.com/kasperiio/api/commit/a48ff079599476e9db41b00236cfc12152cf0bf5))
+* take only 00-23 into account when calculating ratio ([08d30cb](https://github.com/kasperiio/api/commit/08d30cbe5c7f57420b3fec2aeeec266e4a511c20))
+
 ## [0.0.6](https://github.com/kasperiio/api/compare/v0.0.5...v0.0.6) (2024-09-24)
 
 
