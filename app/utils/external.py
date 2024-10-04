@@ -37,8 +37,8 @@ def get_electricity_price(
         raise Exception(f"Failed to fetch data from ENTSO-E API: {response.text}")
 
     prices = []
-    namespace = {"ns": "urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:0"}
     root = ET.fromstring(response.text)
+    namespace = {'ns': root.tag.split('}')[0].strip('{')}
 
     daily_prices = {}
 
