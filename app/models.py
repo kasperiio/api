@@ -50,8 +50,10 @@ class ElectricityPrice(Base):
         if not day_prices:
             return 1
 
+        negative = all(p.price < 0 for p in day_prices)
         day_average = sum(p.price for p in day_prices) / len(day_prices)
-        return self.price / day_average if day_average else 1
+        ratio = self.price / day_average if day_average else 1
+        return -ratio if negative else ratio
 
     @price_daily_average_ratio.expression
     def price_daily_average_ratio(cls):
