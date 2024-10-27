@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.9](https://github.com/kasperiio/api/compare/v0.0.8...v0.0.9) (2024-10-27)
+
+
+### Bug Fixes
+
+* handle negative ratio calculation better ([0694d66](https://github.com/kasperiio/api/commit/0694d6673e6f96094e56f49b50efd3de409573a6))
+
 ## [0.0.8](https://github.com/kasperiio/api/compare/v0.0.7...v0.0.8) (2024-10-20)
 
 
