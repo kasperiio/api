@@ -2,7 +2,7 @@ from datetime import timedelta, timezone
 import os
 import pytz
 from sqlalchemy import types
-from sqlalchemy import Column, Float
+from sqlalchemy import Column, Float, case
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -50,19 +50,29 @@ class ElectricityPrice(Base):
         if not day_prices:
             return 1
 
-        negative = all(p.price < 0 for p in day_prices)
         day_average = sum(p.price for p in day_prices) / len(day_prices)
-        ratio = self.price / day_average if day_average else 1
-        return -ratio if negative else ratio
+        if day_average == 0:
+            return 1
+
+        if day_average < 0:
+            return self.price / abs(day_average)
+        return self.price / day_average
 
     @price_daily_average_ratio.expression
     def price_daily_average_ratio(cls):
         tz = pytz.timezone(os.getenv("TZ", "UTC"))
-        return (
-            cls.price / 
-            func.avg(cls.price).over(
-                partition_by=func.date_trunc('day', func.timezone(tz.zone, cls.timestamp))
-            )
+        
+        daily_avg = func.avg(cls.price).over(
+            partition_by=func.date_trunc('day', func.timezone(tz.zone, cls.timestamp))
+        )
+        
+        return case(
+            # Handle zero division
+            (daily_avg == 0, 1),
+            # For negative daily average, divide by absolute value of average
+            (daily_avg < 0, cls.price / func.abs(daily_avg)),
+            # For positive daily average, normal ratio
+            else_=cls.price / daily_avg
         )
 
     def __eq__(self, other):
