@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.8](https://github.com/kasperiio/api/compare/v0.0.7...v0.0.8) (2024-10-20)
+
+
+### Bug Fixes
+
+* fully negative day resulted in bad ratio calculation ([573ca90](https://github.com/kasperiio/api/commit/573ca903249187cc0e03973eb39360c189d15cad))
+
 ## [0.0.7](https://github.com/kasperiio/api/compare/v0.0.6...v0.0.7) (2024-10-04)
 
 
