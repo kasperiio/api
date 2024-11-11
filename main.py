@@ -19,7 +19,7 @@ tags_metadata = [
 
 app = FastAPI(openapi_tags=tags_metadata)
 
-app.include_router(electricity.router, prefix="/electricity", tags=["electricity"])
+app.include_router(electricity.router)
 
 @app.get("/", include_in_schema=False)
 async def root():
