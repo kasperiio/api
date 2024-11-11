@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.11](https://github.com/kasperiio/api/compare/v0.0.10...v0.0.11) (2024-11-11)
+
+
+### Bug Fixes
+
+* router prefix included twice ([461fc84](https://github.com/kasperiio/api/commit/461fc8406a60cda8135e01c28aceaf8784383712))
+
 ## [0.0.10](https://github.com/kasperiio/api/compare/v0.0.9...v0.0.10) (2024-11-11)
 
 
