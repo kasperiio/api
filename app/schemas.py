@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 from pydantic import BaseModel, ConfigDict, Field, RootModel, validator
-from zoneinfo import ZoneInfo
+
+from app.models import ElectricityPrice
 
 
 class PriceData(BaseModel):
@@ -12,15 +13,6 @@ class PriceData(BaseModel):
         ...,
         description="Ratio of price to daily average"
     )
-
-    @validator('price_daily_average_ratio')
-    def validate_ratio(cls, v: float) -> float:
-        """Ensure ratio is reasonable."""
-        if v < 0:
-            raise ValueError("Price ratio cannot be negative")
-        if v > 10:  # Arbitrary reasonable maximum
-            raise ValueError("Price ratio seems unreasonably high")
-        return v
 
 
 class ElectricityPriceResponse(RootModel[Dict[datetime, PriceData]]):
@@ -37,7 +29,7 @@ class ElectricityPriceResponse(RootModel[Dict[datetime, PriceData]]):
                 },
                 "2024-01-01T13:00:00+00:00": {
                     "price": 45.0,
-                    "price_daily_average_ratio": 1.1,
+                    "price_daily_average_ratio": -0.9,
                 }
             }
         },
@@ -78,15 +70,6 @@ class ElectricityPriceCreate(BaseModel):
         """Ensure timestamp has timezone information."""
         if v.tzinfo is None:
             raise ValueError("Timestamp must be timezone-aware")
-        return v
-
-    @validator('price')
-    def price_must_be_reasonable(cls, v: float) -> float:
-        """Validate price is within reasonable bounds."""
-        if v < -1000:  # Adjust these bounds based on your needs
-            raise ValueError("Price seems unreasonably low")
-        if v > 10000:
-            raise ValueError("Price seems unreasonably high")
         return v
 
     model_config = ConfigDict(

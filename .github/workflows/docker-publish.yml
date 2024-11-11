@@ -1,8 +1,9 @@
 name: build-docker-image
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
 
 env:
