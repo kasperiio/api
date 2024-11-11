@@ -43,12 +43,6 @@ def get_electricity_price(
     if start_date_dt == end_date_dt:
         end_date_dt = end_date_dt.replace(hour=23)
 
-    if (end_date_dt - start_date_dt).days > 7:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Date range cannot exceed 7 days"
-        )
-
     # Query the database for prices
     prices = crud.get_electricity_prices(db, start_date_dt, end_date_dt)
 
