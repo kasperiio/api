@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.13](https://github.com/kasperiio/api/compare/v0.0.12...v0.0.13) (2024-11-11)
+
+
+### Bug Fixes
+
+* allow negative price ratio ([0308406](https://github.com/kasperiio/api/commit/030840619e142c13226335623dd7a793551845c6))
+* trigger release build with release creation ([ac88887](https://github.com/kasperiio/api/commit/ac88887237c84c9c85939a91936217df5f53ec37))
+
 ## [0.0.12](https://github.com/kasperiio/api/compare/v0.0.11...v0.0.12) (2024-11-11)
 
 
