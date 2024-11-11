@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.14](https://github.com/kasperiio/api/compare/v0.0.13...v0.0.14) (2024-11-11)
+
+
+### Bug Fixes
+
+* actually fix wrong schema and docker build automation ([e34b14f](https://github.com/kasperiio/api/commit/e34b14f933587aa4842f41fe00a3e7512e9b57c2))
+
 ## [0.0.13](https://github.com/kasperiio/api/compare/v0.0.12...v0.0.13) (2024-11-11)
 
 
