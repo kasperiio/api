@@ -10,8 +10,7 @@ class PriceData(BaseModel):
     price: float = Field(..., description="Electricity price")
     price_daily_average_ratio: float = Field(
         ...,
-        description="Ratio of price to daily average",
-        ge=0,  # Must be non-negative
+        description="Ratio of price to daily average"
     )
 
     @validator('price_daily_average_ratio')
