@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.10](https://github.com/kasperiio/api/compare/v0.0.9...v0.0.10) (2024-11-11)
+
+
+### Miscellaneous Chores
+
+* release 0.0.10 ([5269472](https://github.com/kasperiio/api/commit/526947266bfd7f28948b2746691dd07051e91d55))
+
 ## [0.0.9](https://github.com/kasperiio/api/compare/v0.0.8...v0.0.9) (2024-10-27)
 
 
