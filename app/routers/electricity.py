@@ -1,97 +1,101 @@
 from datetime import datetime
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+import pytz
 import os
 
-import pytz
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from app import schemas, models
+from app.crud import electricity as crud
+from app.database import get_db
+from app.utils.date_utils import convert_date_tz
 
-from .. import schemas
-from ..crud import electricity as crud
-from ..database import get_db
-from ..utils.date_utils import convert_date_tz
-
-router = APIRouter()
+router = APIRouter(
+    prefix="/electricity",
+    tags=["electricity"]
+)
 
 
-def convert_to_timezone(prices):
-    """
-    Convert a list of electricity prices to a specified timezone.
-
-    Args:
-        prices (List[schemas.ElectricityPrice]): The list of electricity prices to be converted.
-        tz_str (str): The timezone string to convert the prices to.
-
-    Returns:
-        List[schemas.ElectricityPrice]: The list of electricity prices converted to the specified timezone.
-    """
+def convert_to_timezone(prices: List[models.ElectricityPrice]) -> List[models.ElectricityPrice]:
+    """Convert prices timestamps to configured timezone."""
     if os.getenv("TZ") != "UTC":
-        tz = pytz.timezone(os.getenv("TZ"))
+        tz = pytz.timezone(os.getenv("TZ", "UTC"))
         for price in prices:
             price.timestamp = price.timestamp.astimezone(tz)
     return prices
 
 
-@router.get("/price_at", response_model=schemas.ElectricityPrice)
+@router.get("/price_at", response_model=schemas.ElectricityPriceResponse)
 def get_electricity_price(
-    start_date: datetime = Query(
-        example=datetime.now(),
-    ),
-    end_date: datetime = Query(
-        example=datetime.now(),
-    ),
-    db: Session = Depends(get_db),
+        start_date: datetime = Query(
+            example=datetime.now(),
+        ),
+        end_date: datetime = Query(
+            example=datetime.now(),
+        ),
+        db: Session = Depends(get_db),
 ):
-    """
-        Fetches electricity prices for a given time period.
-    """
+    """Fetches electricity prices for a given time period."""
     # Convert the input dates timezones to UTC
     start_date_dt = convert_date_tz(start_date)
     end_date_dt = convert_date_tz(end_date)
-    if start_date_dt == end_date_dt:
-        end_date_dt.replace(hour=23)
 
-    # Query the database for prices within the given date range
+    if start_date_dt == end_date_dt:
+        end_date_dt = end_date_dt.replace(hour=23)
+
+    if (end_date_dt - start_date_dt).days > 7:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Date range cannot exceed 7 days"
+        )
+
+    # Query the database for prices
     prices = crud.get_electricity_prices(db, start_date_dt, end_date_dt)
 
     # Convert timestamps to the specified timezone if needed
     prices = convert_to_timezone(prices)
 
-    return schemas.ElectricityPrice.from_db_model_list(prices)
+    return schemas.ElectricityPriceResponse.from_db_model_list(prices)
 
 
-@router.get("/current_price", response_model=schemas.ElectricityPrice)
+@router.get("/current_price", response_model=schemas.ElectricityPriceResponse)
 def get_current_electricity_price(
-    db: Session = Depends(get_db),
+        db: Session = Depends(get_db),
 ):
-    """
-        Fetches the current electricity price.
-    """
-    # Fetch the current date and hour
+    """Fetches the current electricity price."""
     current_datetime = datetime.now(pytz.utc)
+    normalized_time = current_datetime.replace(minute=0, second=0, microsecond=0)
 
-    # Query the database for prices within the given date range
-    prices = crud.get_electricity_prices(db, current_datetime, current_datetime)
+    # Query the database for the current price
+    prices = crud.get_electricity_prices(db, normalized_time, normalized_time)
+
+    if not prices:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Current price not available"
+        )
 
     # Convert timestamps to the specified timezone if needed
     prices = convert_to_timezone(prices)
 
-    return schemas.ElectricityPrice.from_db_model_list(prices)
+    return schemas.ElectricityPriceResponse.from_db_model_list(prices)
 
 
-@router.get("/cheapest_hours", response_model=schemas.ElectricityPrice)
+@router.get("/cheapest_hours", response_model=schemas.ElectricityPriceResponse)
 def get_cheapest_hours_today(
-    amount: int = Query(6, description="Number of cheapest hours to find"),
-    consecutive: bool = Query(False, description="Should the hours be consecutive"),
-    db: Session = Depends(get_db),
+        amount: int = Query(6, description="Number of cheapest hours to find"),
+        consecutive: bool = Query(False, description="Should the hours be consecutive"),
+        db: Session = Depends(get_db),
 ):
-    """
-        Fetches the cheapest electricity prices for a given amount.
-    """
+    """Fetches the cheapest electricity prices for a given amount."""
     if amount > 24 or amount < 1:
-        raise HTTPException(status_code=400, detail="Amount must be between 1 and 24")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Amount must be between 1 and 24"
+        )
 
     # Define the timezone
-    tz = pytz.timezone(os.getenv("TZ"))
+    tz = pytz.timezone(os.getenv("TZ", "UTC"))
 
     # Fetch the current date in the specified timezone
     current_date = datetime.now(tz).date()
@@ -109,37 +113,51 @@ def get_cheapest_hours_today(
 
     if not db_prices:
         raise HTTPException(
-            status_code=404, detail="No electricity prices found for today"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No electricity prices found for today"
         )
 
     if consecutive:
-        # Ensure db_prices is sorted by timestamp
-        db_prices.sort(key=lambda x: x.timestamp)
-
         # Find the cheapest consecutive hours
-        cheapest_hours = []
-        for i in range(len(db_prices) - amount + 1):
-            consecutive_hours = db_prices[i : i + amount]
-            if len(consecutive_hours) == amount:
-                cheapest_hours.append(consecutive_hours)
-
-        # Sort by the sum of prices in each consecutive block
-        if cheapest_hours:
-            cheapest_hours.sort(key=lambda x: sum(hour.price for hour in x))
-            cheapest_hours = cheapest_hours[0]
-        else:
-            cheapest_hours = []
+        cheapest_hours = find_consecutive_cheapest_hours(db_prices, amount)
     else:
-        # Ensure db_prices is sorted by price
-        db_prices.sort(key=lambda x: x.price)
-
         # Get the cheapest non-consecutive hours
-        cheapest_hours = db_prices[:amount] if len(db_prices) >= amount else db_prices
-
-    # Sort the cheapest hours by timestamp
-    cheapest_hours.sort(key=lambda x: x.timestamp)
+        cheapest_hours = sorted(db_prices, key=lambda x: x.price)[:amount]
+        cheapest_hours.sort(key=lambda x: x.timestamp)
 
     # Convert timestamps to the specified timezone if needed
     cheapest_hours = convert_to_timezone(cheapest_hours)
 
-    return schemas.ElectricityPrice.from_db_model_list(cheapest_hours)
+    return schemas.ElectricityPriceResponse.from_db_model_list(cheapest_hours)
+
+
+def find_consecutive_cheapest_hours(
+        prices: List[models.ElectricityPrice],
+        count: int
+) -> List[models.ElectricityPrice]:
+    """Find the cheapest consecutive hours from a list of prices."""
+    if len(prices) < count:
+        return prices
+
+    # Ensure prices are sorted by timestamp
+    prices.sort(key=lambda x: x.timestamp)
+
+    min_total = float('inf')
+    cheapest_block = None
+
+    # Find the consecutive block with lowest total price
+    for i in range(len(prices) - count + 1):
+        block = prices[i:i + count]
+        total = sum(p.price for p in block)
+
+        if total < min_total:
+            min_total = total
+            cheapest_block = block
+
+    return cheapest_block or []
+
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy"}

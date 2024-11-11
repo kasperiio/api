@@ -1,11 +1,9 @@
 from datetime import datetime, timedelta
 from typing import List
-import pytz
 from sqlalchemy.orm import Session
 
 from app.utils import external
-from .. import models
-
+from app import models
 
 def get_electricity_prices(
     db: Session, start_date: datetime, end_date: datetime
@@ -23,6 +21,7 @@ def get_electricity_prices(
     start_date = start_date.replace(minute=0, second=0, microsecond=0)
     end_date = end_date.replace(minute=0, second=0, microsecond=0)
 
+    # Query existing prices from database
     prices = (
         db.query(models.ElectricityPrice)
         .filter(
@@ -32,6 +31,7 @@ def get_electricity_prices(
         .all()
     )
 
+    # Find missing hours
     existing_timestamps = set(price.timestamp for price in prices)
     all_hours = {
         start_date + timedelta(hours=i)
@@ -42,22 +42,38 @@ def get_electricity_prices(
     if not missing_hours:
         all_prices = prices
     else:
-        # Fetch missing data from ENTSO-E API
-        new_prices = external.get_electricity_price(
-            min(missing_hours), max(missing_hours) + timedelta(hours=1)
-        )
+        try:
+            # Fetch missing data from ENTSO-E API
+            new_prices = external.get_electricity_price(
+                min(missing_hours), max(missing_hours) + timedelta(hours=1)
+            )
 
-        # Filter out prices that were outside wanted range
-        new_prices = [price for price in new_prices if price.timestamp in missing_hours]
+            # Filter out prices that were outside wanted range
+            new_prices = [price for price in new_prices if price.timestamp in missing_hours]
 
-        # Add new prices to the database
-        if new_prices:
-            for new_price in new_prices:
-                db.add(new_price)
-            db.commit()
+            # Add new prices to the database
+            if new_prices:
+                for new_price in new_prices:
+                    db.add(new_price)
+                db.commit()
 
-        # Merge existing and new prices
-        all_prices = prices + new_prices
-        all_prices.sort(key=lambda x: x.timestamp)
+            # Merge existing and new prices
+            all_prices = prices + new_prices
+            all_prices.sort(key=lambda x: x.timestamp)
+        except Exception as e:
+            db.rollback()
+            # If external API fails, return what we have from the database
+            all_prices = prices
+            all_prices.sort(key=lambda x: x.timestamp)
 
     return all_prices
+
+# Optional: Keep the service class for future use
+class ElectricityPriceService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_electricity_prices(
+        self, start_date: datetime, end_date: datetime
+    ) -> List[models.ElectricityPrice]:
+        return get_electricity_prices(self.db, start_date, end_date)

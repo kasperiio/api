@@ -1,82 +1,101 @@
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 import os
 import pytz
-from sqlalchemy import types
-from sqlalchemy import Column, Float, case
+from sqlalchemy import Column, Float, case, types
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy.ext.hybrid import hybrid_property
 
-from .database import Base
+from app.database import Base
 
 
 class UTCDateTime(types.TypeDecorator):
+    """Custom DateTime type that enforces UTC timezone."""
 
     impl = types.DateTime
     cache_ok = True
 
-    def process_bind_param(self, value, _):
+    def process_bind_param(self, value: Optional[datetime], dialect) -> Optional[datetime]:
         if value is None:
-            return
-        if value.utcoffset() is None:
-            raise ValueError("Got naive datetime while timezone-aware is expected")
+            return None
+
+        if value.tzinfo is None:
+            raise ValueError("Naive datetime not allowed. Please provide timezone-aware datetime.")
+
         return value.astimezone(timezone.utc)
 
-    def process_result_value(self, value, _):
+    def process_result_value(self, value: Optional[datetime], dialect) -> Optional[datetime]:
         if value is not None:
-            return value.replace(tzinfo=pytz.utc)
+            return value.replace(tzinfo=timezone.utc)
+        return None
 
 
 class ElectricityPrice(Base):
+    """Model for storing electricity prices."""
+
     __tablename__ = "electricity_prices"
 
     timestamp = Column(UTCDateTime, index=True, primary_key=True)
-    price = Column(Float)
+    price = Column(Float, nullable=False)
 
     @hybrid_property
-    def price_daily_average_ratio(self):
+    def price_daily_average_ratio(self) -> float:
+        """Calculate ratio of price to daily average.
+
+        Returns:
+            float: Price divided by daily average. Returns 1 if no data or zero average.
+        """
         day_start = self.timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(hours=23)
+        day_end = day_start + timedelta(days=1)
 
         session = Session.object_session(self)
         if session is None:
-            return 1
+            return 1.0
 
-        day_prices = session.query(ElectricityPrice).filter(
-            ElectricityPrice.timestamp >= day_start.astimezone(pytz.UTC),
-            ElectricityPrice.timestamp < day_end.astimezone(pytz.UTC)
-        ).all()
+        day_prices = (
+            session.query(ElectricityPrice)
+            .filter(
+                ElectricityPrice.timestamp >= day_start.astimezone(timezone.utc),
+                ElectricityPrice.timestamp < day_end.astimezone(timezone.utc)
+            )
+            .all()
+        )
 
         if not day_prices:
-            return 1
+            return 1.0
 
         day_average = sum(p.price for p in day_prices) / len(day_prices)
-        if day_average == 0:
-            return 1
 
-        if day_average < 0:
+        if day_average == 0:
+            return 1.0
+        elif day_average < 0:
             return self.price / abs(day_average)
-        return self.price / day_average
+        else:
+            return self.price / day_average
 
     @price_daily_average_ratio.expression
     def price_daily_average_ratio(cls):
+        """SQL expression for calculating price_daily_average_ratio."""
         tz = pytz.timezone(os.getenv("TZ", "UTC"))
-        
+
         daily_avg = func.avg(cls.price).over(
             partition_by=func.date_trunc('day', func.timezone(tz.zone, cls.timestamp))
         )
-        
+
         return case(
-            # Handle zero division
-            (daily_avg == 0, 1),
-            # For negative daily average, divide by absolute value of average
+            (daily_avg == 0, 1.0),
             (daily_avg < 0, cls.price / func.abs(daily_avg)),
-            # For positive daily average, normal ratio
             else_=cls.price / daily_avg
         )
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ElectricityPrice):
+            return NotImplemented
         return self.timestamp == other.timestamp
 
-    def __repr__(self):
-        return f"<ElectricityPrice(timestamp={self.timestamp}, price={self.price})>"
+    def __repr__(self) -> str:
+        return (
+            f"ElectricityPrice(timestamp={self.timestamp.isoformat()}, "
+            f"price={self.price:.2f})"
+        )

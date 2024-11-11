@@ -1,12 +1,14 @@
 from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+
 from app.database import engine
 from app.models import Base
 from app.routers import electricity
 
 Base.metadata.create_all(bind=engine)
 
-load_dotenv()
 
 tags_metadata = [
     {
@@ -18,3 +20,8 @@ tags_metadata = [
 app = FastAPI(openapi_tags=tags_metadata)
 
 app.include_router(electricity.router, prefix="/electricity", tags=["electricity"])
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root path to API documentation."""
+    return RedirectResponse(url="/docs")
