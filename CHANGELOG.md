@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.12](https://github.com/kasperiio/api/compare/v0.0.11...v0.0.12) (2024-11-11)
+
+
+### Bug Fixes
+
+* remove date range limiter ([5270241](https://github.com/kasperiio/api/commit/52702416ddd04f7c82403506e45c48ce89ba0a41))
+
 ## [0.0.11](https://github.com/kasperiio/api/compare/v0.0.10...v0.0.11) (2024-11-11)
 
 
