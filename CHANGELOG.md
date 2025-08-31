@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/kasperiio/api/compare/v2.0.0...v2.1.0) (2025-08-31)
+
+
+### Features
+
+* latest endpoint, get todays and tomorrows data ([4b5d4f1](https://github.com/kasperiio/api/commit/4b5d4f1e14769bef3fd5c83737bd23a08e9a5f20))
+
 ## [2.0.0](https://github.com/kasperiio/api/compare/v0.1.3...v2.0.0) (2025-08-31)
 
 
