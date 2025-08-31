@@ -6,11 +6,12 @@ from sqlalchemy import select
 from app.providers import get_provider_manager, ProviderError
 from app import models
 
-def get_electricity_prices(
+async def get_electricity_prices(
     db: Session, start_date: datetime, end_date: datetime
 ) -> List[models.ElectricityPrice]:
     """
-    Retrieves electricity prices from the database within the specified time range, will use external data if not found.
+    Async version of get_electricity_prices that uses the async provider manager.
+
     Args:
         db (Session): The database session.
         start_date (datetime): The start date of the time range.
@@ -31,22 +32,23 @@ def get_electricity_prices(
     result = db.execute(stmt)
     prices = result.scalars().all()
 
-    # Find missing hours
-    existing_timestamps = set(price.timestamp for price in prices)
-    all_hours = {
+    # Check if we have all the hours we need
+    # Calculate the number of hours between start and end (inclusive)
+    hours_diff = int((end_date - start_date).total_seconds() // 3600)
+    expected_hours = {
         start_date + timedelta(hours=i)
-        for i in range(int((end_date - start_date).total_seconds() // 3600) + 1)
+        for i in range(hours_diff + 1)
     }
-    missing_hours = all_hours - existing_timestamps
 
-    if not missing_hours:
-        all_prices = prices
-    else:
+    existing_hours = {price.timestamp for price in prices}
+    missing_hours = expected_hours - existing_hours
+
+    if missing_hours:
         try:
-            # Fetch missing data using provider manager (Nordpool + ENTSO-E fallback)
-            manager = get_provider_manager()
-            new_prices = manager.get_electricity_price_sync(
-                min(missing_hours), max(missing_hours) + timedelta(hours=1)
+            # Use async provider manager
+            provider_manager = get_provider_manager()
+            new_prices = await provider_manager.get_electricity_price(
+                min(missing_hours), max(missing_hours)
             )
 
             # Filter out prices that were outside wanted range
@@ -61,10 +63,12 @@ def get_electricity_prices(
             # Merge existing and new prices
             all_prices = prices + new_prices
             all_prices.sort(key=lambda x: x.timestamp)
-        except (ProviderError, Exception) as e:
+        except (ProviderError, Exception):
             db.rollback()
             # If all providers fail, return what we have from the database
             all_prices = prices
             all_prices.sort(key=lambda x: x.timestamp)
+    else:
+        all_prices = prices
 
     return all_prices

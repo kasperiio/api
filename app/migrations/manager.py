@@ -2,12 +2,10 @@
 Migration manager and registry.
 """
 
-import logging
 from typing import List
+from app.logging_config import logger
 from .runner import MigrationRunner, Migration
 from .migrations import get_all_migrations
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def run_migrations(database_url: str) -> int:
@@ -24,11 +22,11 @@ def run_migrations(database_url: str) -> int:
         runner = MigrationRunner(database_url)
         migrations = get_all_migrations()
         
-        _LOGGER.info(f"Found {len(migrations)} total migrations")
+        logger.info(f"Found {len(migrations)} total migrations")
         applied_count = runner.run_migrations(migrations)
-        
+
         return applied_count
-        
+
     except Exception as e:
-        _LOGGER.error(f"Migration process failed: {e}")
+        logger.error(f"Migration process failed: {e}")
         raise

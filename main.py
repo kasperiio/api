@@ -1,17 +1,15 @@
 from dotenv import load_dotenv
-load_dotenv()
-import logging
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
+from app.logging_config import logger
 from app.database import engine, SQLALCHEMY_DATABASE_URL
 from app.models import Base
 from app.routers import electricity
 from app.migrations import run_migrations
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Load environment variables first
+load_dotenv()
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -20,11 +18,11 @@ Base.metadata.create_all(bind=engine)
 try:
     migration_count = run_migrations(SQLALCHEMY_DATABASE_URL)
     if migration_count > 0:
-        logger.info(f"Applied {migration_count} database migrations")
+        logger.info("Applied %s database migrations", migration_count)
     else:
         logger.info("Database is up to date")
 except Exception as e:
-    logger.error(f"Migration failed: {e}")
+    logger.error("Migration failed: %s", e)
     raise
 
 

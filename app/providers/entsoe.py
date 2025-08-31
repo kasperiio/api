@@ -5,7 +5,6 @@ This module provides integration with the ENTSO-E API for fetching
 Finnish electricity spot prices as a fallback provider.
 """
 
-import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
@@ -14,10 +13,9 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from app.logging_config import logger
 from app.models import ElectricityPrice
 from .base import ElectricityPriceProvider, ProviderAPIError, ProviderDataError
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class EntsoeClient(ElectricityPriceProvider):

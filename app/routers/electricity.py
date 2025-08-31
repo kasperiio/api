@@ -18,6 +18,7 @@ router = APIRouter(
     tags=["electricity"]
 )
 
+from app.logging_config import logger
 
 def convert_to_timezone(prices: List[models.ElectricityPrice], target_tz: str = "UTC") -> List[models.ElectricityPrice]:
     """Convert UTC prices to target timezone."""
@@ -40,7 +41,7 @@ def convert_to_timezone(prices: List[models.ElectricityPrice], target_tz: str = 
         return prices
     except Exception as e:
         # If timezone conversion fails, return original prices
-        print(f"Timezone conversion failed: {e}")
+        logger.error(f"Timezone conversion failed: {e}")
         return prices
 
 
@@ -53,7 +54,7 @@ def ensure_utc(dt: datetime) -> datetime:
 
 
 @router.get("/price_at", response_model=schemas.ElectricityPriceResponse)
-def get_electricity_price(
+async def get_electricity_price(
         start_date: datetime = Query(
             example=datetime.now(),
         ),
@@ -68,11 +69,8 @@ def get_electricity_price(
     start_date_utc = ensure_utc(start_date)
     end_date_utc = ensure_utc(end_date)
 
-    if start_date_utc == end_date_utc:
-        end_date_utc = end_date_utc.replace(hour=23)
-
-    # Query the database for prices (all in UTC)
-    prices = crud.get_electricity_prices(db, start_date_utc, end_date_utc)
+    # Query the database for prices (all in UTC) using async CRUD
+    prices = await crud.get_electricity_prices(db, start_date_utc, end_date_utc)
 
     # Convert timestamps to requested timezone
     prices = convert_to_timezone(prices, timezone_str)
@@ -81,7 +79,7 @@ def get_electricity_price(
 
 
 @router.get("/current_price", response_model=schemas.ElectricityPriceResponse)
-def get_current_electricity_price(
+async def get_current_electricity_price(
         timezone_str: str = Query("UTC", description="Response timezone (e.g., 'Europe/Helsinki', 'UTC')"),
         db: Session = Depends(get_db),
 ):
@@ -89,8 +87,8 @@ def get_current_electricity_price(
     current_datetime = datetime.now(timezone.utc)
     normalized_time = current_datetime.replace(minute=0, second=0, microsecond=0)
 
-    # Query the database for the current price (UTC)
-    prices = crud.get_electricity_prices(db, normalized_time, normalized_time)
+    # Query the database for the current price (UTC) using async CRUD
+    prices = await crud.get_electricity_prices(db, normalized_time, normalized_time)
 
     if not prices:
         raise HTTPException(
@@ -105,7 +103,7 @@ def get_current_electricity_price(
 
 
 @router.get("/cheapest_hours", response_model=schemas.ElectricityPriceResponse)
-def get_cheapest_hours_today(
+async def get_cheapest_hours_today(
         amount: int = Query(6, description="Number of cheapest hours to find"),
         consecutive: bool = Query(False, description="Should the hours be consecutive"),
         timezone_str: str = Query("UTC", description="Timezone for 'today' calculation and response (e.g., 'Europe/Helsinki', 'UTC')"),
@@ -142,7 +140,7 @@ def get_cheapest_hours_today(
         start_of_day_utc = datetime.combine(current_date, datetime.min.time()).replace(tzinfo=timezone.utc)
         end_of_day_utc = datetime.combine(current_date, datetime.max.time()).replace(tzinfo=timezone.utc)
 
-    db_prices = crud.get_electricity_prices(db, start_of_day_utc, end_of_day_utc)
+    db_prices = await crud.get_electricity_prices(db, start_of_day_utc, end_of_day_utc)
 
     if not db_prices:
         raise HTTPException(

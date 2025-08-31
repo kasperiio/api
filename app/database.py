@@ -38,7 +38,6 @@ def get_db() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
-        db.commit()
         db.close()
 
 def init_db() -> None:

@@ -44,7 +44,7 @@ This application provides API for different usecases (Electricity).
 
 1. Start the application:
     ```sh
-    uvicorn app.main:app --reload
+    uvicorn main:app --reload --log-config log_config.yaml
     ```
 
 2. Access the API documentation at `http://127.0.0.1:8000/docs`.

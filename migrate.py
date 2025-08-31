@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import logging
 import sys
 from dotenv import load_dotenv
 
@@ -20,16 +19,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.database import SQLALCHEMY_DATABASE_URL
-from app.migrations import run_migrations
+from app.migrations import run_migrations  # noqa: E402
 from app.migrations.runner import MigrationRunner
 from app.migrations.migrations import get_all_migrations
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Configure unified logging for standalone script
+from app.logging_config import setup_logging, logger
+setup_logging()
 
 
 def check_migration_status():
@@ -39,46 +35,45 @@ def check_migration_status():
         all_migrations = get_all_migrations()
         applied_migrations = runner.get_applied_migrations()
         
-        print("\n=== MIGRATION STATUS ===")
-        print(f"Database: {SQLALCHEMY_DATABASE_URL}")
-        print(f"Total migrations: {len(all_migrations)}")
-        print(f"Applied migrations: {len(applied_migrations)}")
-        
-        print("\nMigration Details:")
+        logger.info("=== MIGRATION STATUS ===")
+        logger.info("Database: %s", SQLALCHEMY_DATABASE_URL)
+        logger.info("Total migrations: %s", len(all_migrations))
+        logger.info("Applied migrations: %s", len(applied_migrations))
+
+        logger.info("Migration Details:")
         for migration in all_migrations:
             status = "✅ APPLIED" if migration.migration_id in applied_migrations else "⏳ PENDING"
-            print(f"  {migration.migration_id}: {status}")
-            print(f"    Description: {migration.description}")
-        
+            logger.info("  %s: %s", migration.migration_id, status)
+            logger.info("    Description: %s", migration.description)
+
         pending_count = len(all_migrations) - len(applied_migrations)
         if pending_count > 0:
-            print(f"\n⚠️  {pending_count} migrations pending")
+            logger.warning("%s migrations pending", pending_count)
             return False
         else:
-            print("\n✅ Database is up to date")
+            logger.info("✅ Database is up to date")
             return True
             
     except Exception as e:
-        logger.error(f"Failed to check migration status: {e}")
+        logger.error("Failed to check migration status: %s", e)
         return False
 
 
 def run_all_migrations():
     """Run all pending migrations."""
     try:
-        print("\n=== RUNNING MIGRATIONS ===")
+        logger.info("=== RUNNING MIGRATIONS ===")
         migration_count = run_migrations(SQLALCHEMY_DATABASE_URL)
-        
+
         if migration_count > 0:
-            print(f"✅ Successfully applied {migration_count} migrations")
+            logger.info("✅ Successfully applied %s migrations", migration_count)
         else:
-            print("✅ No migrations needed - database is up to date")
-        
+            logger.info("✅ No migrations needed - database is up to date")
+
         return True
-        
+
     except Exception as e:
-        logger.error(f"Migration failed: {e}")
-        print(f"❌ Migration failed: {e}")
+        logger.error("Migration failed: %s", e)
         return False
 
 
@@ -96,30 +91,29 @@ def rollback_migration(migration_id: str):
                 break
         
         if not target_migration:
-            print(f"❌ Migration '{migration_id}' not found")
+            logger.info("❌ Migration '%s' not found", migration_id)
             return False
         
-        print(f"\n=== ROLLING BACK MIGRATION ===")
-        print(f"Migration: {migration_id}")
-        print(f"Description: {target_migration.description}")
+        logger.info("\n=== ROLLING BACK MIGRATION ===")
+        logger.info("Migration: %s", migration_id)
+        logger.info("Description: %s", target_migration.description)
         
         # Confirm rollback
         confirm = input("\nAre you sure you want to rollback this migration? (yes/no): ")
         if confirm.lower() != 'yes':
-            print("Rollback cancelled")
+            logger.info("Rollback cancelled")
             return False
         
         success = runner.rollback_migration(target_migration)
         if success:
-            print("✅ Migration rolled back successfully")
+            logger.info("✅ Migration rolled back successfully")
         else:
-            print("ℹ️  Migration was not applied, nothing to rollback")
+            logger.info("ℹ️  Migration was not applied, nothing to rollback")
         
         return True
         
     except Exception as e:
-        logger.error(f"Rollback failed: {e}")
-        print(f"❌ Rollback failed: {e}")
+        logger.error("Rollback failed: %s", e)
         return False
 
 
@@ -139,8 +133,8 @@ def main():
     
     args = parser.parse_args()
     
-    print("🔧 Database Migration Tool")
-    print("=" * 50)
+    logger.info("🔧 Database Migration Tool")
+    logger.info("=" * 50)
     
     if args.check:
         success = check_migration_status()
@@ -151,10 +145,10 @@ def main():
         success = run_all_migrations()
     
     if success:
-        print("\n✅ Operation completed successfully")
+        logger.info("\n✅ Operation completed successfully")
         sys.exit(0)
     else:
-        print("\n❌ Operation failed")
+        logger.error("\n❌ Operation failed")
         sys.exit(1)
 
 

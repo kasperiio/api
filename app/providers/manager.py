@@ -5,18 +5,15 @@ This module manages multiple electricity price providers and implements
 fallback logic to ensure reliable data fetching.
 """
 
-import asyncio
-import logging
 from datetime import datetime
 from typing import List, Optional
 import aiohttp
 
+from app.logging_config import logger
 from app.models import ElectricityPrice
 from .base import ElectricityPriceProvider, ProviderError
 from .nordpool import NordpoolClient
 from .entsoe import EntsoeClient
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class ProviderManager:
@@ -35,29 +32,30 @@ class ProviderManager:
     def _initialize_providers(self):
         """Initialize all available providers in priority order."""
         # Add Nordpool provider (highest priority)
-        nordpool = NordpoolClient(session=self._session)
+        # Don't pass session to avoid event loop conflicts in sync contexts
+        nordpool = NordpoolClient(session=None)
         if nordpool.is_available():
             self._providers.append(nordpool)
-            _LOGGER.info("Nordpool provider initialized")
+            logger.info("Nordpool provider initialized")
         else:
-            _LOGGER.warning("Nordpool provider not available")
-        
+            logger.warning("Nordpool provider not available")
+
         # Add ENTSO-E provider (fallback)
         entsoe = EntsoeClient()
         if entsoe.is_available():
             self._providers.append(entsoe)
-            _LOGGER.info("ENTSO-E provider initialized")
+            logger.info("ENTSO-E provider initialized")
         else:
-            _LOGGER.warning("ENTSO-E provider not available (missing API key)")
-        
+            logger.warning("ENTSO-E provider not available (missing API key)")
+
         # Sort providers by priority
         self._providers.sort(key=lambda p: p.get_priority())
-        
+
         if not self._providers:
-            _LOGGER.error("No electricity price providers available!")
+            logger.error("No electricity price providers available!")
         else:
             provider_names = [p.name for p in self._providers]
-            _LOGGER.info(f"Initialized providers in order: {provider_names}")
+            logger.info(f"Initialized providers in order: {provider_names}")
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -110,18 +108,18 @@ class ProviderManager:
                 break
                 
             try:
-                _LOGGER.info(f"Trying provider: {provider.name}")
+                logger.info(f"Trying provider: {provider.name}")
                 prices = await provider.get_electricity_price(start_date, end_date)
-                
+
                 if prices:
-                    _LOGGER.info(f"Successfully fetched {len(prices)} prices from {provider.name}")
+                    logger.info(f"Successfully fetched {len(prices)} prices from {provider.name}")
                     return prices
                 else:
-                    _LOGGER.warning(f"Provider {provider.name} returned no data")
-                    
+                    logger.warning(f"Provider {provider.name} returned no data")
+
             except Exception as e:
                 last_error = e
-                _LOGGER.warning(f"Provider {provider.name} failed: {str(e)}")
+                logger.warning(f"Provider {provider.name} failed: {str(e)}")
                 
             providers_tried += 1
         
@@ -132,38 +130,7 @@ class ProviderManager:
         
         raise ProviderError(error_msg)
     
-    def get_electricity_price_sync(
-        self,
-        start_date: datetime,
-        end_date: datetime,
-        max_retries: int = 2
-    ) -> List[ElectricityPrice]:
-        """
-        Synchronous version for backward compatibility.
 
-        Args:
-            start_date: Start datetime (timezone-aware)
-            end_date: End datetime (timezone-aware)
-            max_retries: Maximum number of providers to try
-
-        Returns:
-            List of ElectricityPrice objects
-
-        Raises:
-            ProviderError: If all providers fail
-        """
-        try:
-            # Check if we're in an async context
-            loop = asyncio.get_running_loop()
-            # If we get here, we're in an async context - this is not allowed
-            raise RuntimeError("Cannot call synchronous method from async context. Use get_electricity_price() instead.")
-        except RuntimeError as e:
-            if "no running event loop" in str(e).lower():
-                # No event loop exists, create a new one - this is the normal case
-                return asyncio.run(self.get_electricity_price(start_date, end_date, max_retries))
-            else:
-                # We're in an async context
-                raise e
     
     def get_available_providers(self) -> List[str]:
         """
@@ -231,33 +198,4 @@ async def get_electricity_price(
     return await manager.get_electricity_price(start_date, end_date)
 
 
-def get_electricity_price_sync(
-    start_date: datetime,
-    end_date: datetime
-) -> List[ElectricityPrice]:
-    """
-    Synchronous convenience function for fetching electricity prices.
 
-    Args:
-        start_date: Start datetime (timezone-aware)
-        end_date: End datetime (timezone-aware)
-
-    Returns:
-        List of ElectricityPrice objects
-
-    Raises:
-        ProviderError: If all providers fail
-    """
-    try:
-        # Check if we're in an async context
-        loop = asyncio.get_running_loop()
-        # If we get here, we're in an async context - this is not allowed
-        raise RuntimeError("Cannot call synchronous method from async context. Use get_electricity_price() instead.")
-    except RuntimeError as e:
-        if "no running event loop" in str(e).lower():
-            # No event loop exists, create a new one - this is the normal case
-            manager = get_provider_manager()
-            return asyncio.run(manager.get_electricity_price(start_date, end_date))
-        else:
-            # We're in an async context
-            raise e

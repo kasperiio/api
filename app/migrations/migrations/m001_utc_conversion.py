@@ -7,13 +7,11 @@ This migration:
 3. Prepares the system for UTC-only operation
 """
 
-import logging
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from app.logging_config import logger
 from ..runner import Migration
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class UTCConversionMigration(Migration):
@@ -27,28 +25,28 @@ class UTCConversionMigration(Migration):
     
     def up(self, session: Session) -> None:
         """Apply the UTC conversion migration."""
-        _LOGGER.info("Starting UTC conversion migration")
-        
+        logger.info("Starting UTC conversion migration")
+
         # Step 1: Check if electricity_prices table exists
         result = session.execute(text("""
-            SELECT name FROM sqlite_master 
+            SELECT name FROM sqlite_master
             WHERE type='table' AND name='electricity_prices'
         """)).fetchone()
-        
+
         if not result:
-            _LOGGER.info("No electricity_prices table found, skipping data conversion")
+            logger.info("No electricity_prices table found, skipping data conversion")
             return
-        
+
         # Step 2: Get count of existing records
         count_result = session.execute(text("""
             SELECT COUNT(*) as count FROM electricity_prices
         """)).fetchone()
-        
+
         record_count = count_result[0] if count_result else 0
-        _LOGGER.info(f"Found {record_count} electricity price records to process")
-        
+        logger.info(f"Found {record_count} electricity price records to process")
+
         if record_count == 0:
-            _LOGGER.info("No data to convert, migration complete")
+            logger.info("No data to convert, migration complete")
             return
         
         # Step 3: Convert any timezone-aware timestamps to UTC
@@ -60,14 +58,14 @@ class UTCConversionMigration(Migration):
             SELECT timestamp FROM electricity_prices LIMIT 5
         """)).fetchall()
         
-        _LOGGER.info("Sample timestamps before conversion:")
+        logger.info("Sample timestamps before conversion:")
         for row in sample_result:
-            _LOGGER.info(f"  {row[0]}")
-        
+            logger.info(f"  {row[0]}")
+
         # Step 4: Update any records that might have timezone issues
         # For SQLite, timestamps are stored as strings, so we need to ensure
         # they're in the correct UTC format
-        
+
         # This query will normalize any timestamp format issues
         result = session.execute(text("""
             UPDATE electricity_prices
@@ -76,29 +74,29 @@ class UTCConversionMigration(Migration):
         """))
 
         updated_count = result.rowcount if hasattr(result, 'rowcount') else record_count
-        _LOGGER.info(f"Normalized {updated_count} timestamp records to UTC format")
-        
+        logger.info(f"Normalized {updated_count} timestamp records to UTC format")
+
         # Step 5: Verify the conversion
         verification_result = session.execute(text("""
-            SELECT COUNT(*) as count FROM electricity_prices 
+            SELECT COUNT(*) as count FROM electricity_prices
             WHERE timestamp IS NOT NULL
         """)).fetchone()
-        
+
         verified_count = verification_result[0] if verification_result else 0
-        _LOGGER.info(f"Verified {verified_count} records have valid UTC timestamps")
-        
+        logger.info(f"Verified {verified_count} records have valid UTC timestamps")
+
         # Step 6: Log sample of converted data
         sample_after = session.execute(text("""
-            SELECT timestamp FROM electricity_prices 
+            SELECT timestamp FROM electricity_prices
             ORDER BY timestamp DESC LIMIT 3
         """)).fetchall()
-        
-        _LOGGER.info("Sample timestamps after conversion:")
+
+        logger.info("Sample timestamps after conversion:")
         for row in sample_after:
-            _LOGGER.info(f"  {row[0]}")
-        
+            logger.info(f"  {row[0]}")
+
         session.commit()
-        _LOGGER.info("UTC conversion migration completed successfully")
+        logger.info("UTC conversion migration completed successfully")
     
     def down(self, session: Session) -> None:
         """
