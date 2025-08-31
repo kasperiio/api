@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/kasperiio/api/compare/v0.1.0...v0.1.1) (2025-08-31)
+
+
+### Bug Fixes
+
+* db cache incorrect due to nordpool using stockholm tz ([28eda8c](https://github.com/kasperiio/api/commit/28eda8cd1c00eca95ad98ce963c9b3bfe02bd01e))
+
 ## [0.1.0](https://github.com/kasperiio/api/compare/v0.0.14...v0.1.0) (2025-08-31)
 
 
