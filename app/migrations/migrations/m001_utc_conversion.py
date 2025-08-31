@@ -43,7 +43,7 @@ class UTCConversionMigration(Migration):
         """)).fetchone()
 
         record_count = count_result[0] if count_result else 0
-        logger.info(f"Found {record_count} electricity price records to process")
+        logger.info("Found %s electricity price records to process", record_count)
 
         if record_count == 0:
             logger.info("No data to convert, migration complete")
@@ -60,7 +60,7 @@ class UTCConversionMigration(Migration):
         
         logger.info("Sample timestamps before conversion:")
         for row in sample_result:
-            logger.info(f"  {row[0]}")
+            logger.info("  %s", row[0])
 
         # Step 4: Update any records that might have timezone issues
         # For SQLite, timestamps are stored as strings, so we need to ensure
@@ -74,7 +74,7 @@ class UTCConversionMigration(Migration):
         """))
 
         updated_count = result.rowcount if hasattr(result, 'rowcount') else record_count
-        logger.info(f"Normalized {updated_count} timestamp records to UTC format")
+        logger.info("Normalized %s timestamp records to UTC format", updated_count)
 
         # Step 5: Verify the conversion
         verification_result = session.execute(text("""
@@ -83,7 +83,7 @@ class UTCConversionMigration(Migration):
         """)).fetchone()
 
         verified_count = verification_result[0] if verification_result else 0
-        logger.info(f"Verified {verified_count} records have valid UTC timestamps")
+        logger.info("Verified %s records have valid UTC timestamps", verified_count)
 
         # Step 6: Log sample of converted data
         sample_after = session.execute(text("""
@@ -93,7 +93,7 @@ class UTCConversionMigration(Migration):
 
         logger.info("Sample timestamps after conversion:")
         for row in sample_after:
-            logger.info(f"  {row[0]}")
+            logger.info("  %s", row[0])
 
         session.commit()
         logger.info("UTC conversion migration completed successfully")
@@ -106,13 +106,13 @@ class UTCConversionMigration(Migration):
         as we don't store the original timezone information. This rollback
         is mainly for testing purposes.
         """
-        _LOGGER.warning("Rolling back UTC conversion migration")
-        _LOGGER.warning("Note: Original timezone information cannot be perfectly restored")
-        
+        logger.warning("Rolling back UTC conversion migration")
+        logger.warning("Note: Original timezone information cannot be perfectly restored")
+
         # For rollback, we'll just log that the rollback occurred
         # In a production system, you might want to backup data before migration
-        
-        _LOGGER.info("UTC conversion rollback completed (data remains in UTC)")
+
+        logger.info("UTC conversion rollback completed (data remains in UTC)")
     
     def can_rollback(self) -> bool:
         """This migration has limited rollback capability."""

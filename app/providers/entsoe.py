@@ -183,28 +183,4 @@ class EntsoeClient(ElectricityPriceProvider):
         """
         return 10
 
-    # Synchronous method for backward compatibility
-    def get_electricity_price_sync(
-            self,
-            start_date: datetime,
-            end_date: datetime,
-    ) -> List[ElectricityPrice]:
-        """
-        Synchronous version for backward compatibility.
-        
-        This method maintains the original synchronous interface.
-        """
-        import asyncio
-        
-        try:
-            # Try to get the current event loop
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we're already in an async context, we can't use run_until_complete
-                # This is a limitation - in this case, the caller should use the async version
-                raise RuntimeError("Cannot call synchronous method from async context. Use get_electricity_price() instead.")
-            else:
-                return loop.run_until_complete(self.get_electricity_price(start_date, end_date))
-        except RuntimeError:
-            # No event loop exists, create a new one
-            return asyncio.run(self.get_electricity_price(start_date, end_date))
+

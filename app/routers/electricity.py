@@ -41,15 +41,31 @@ def convert_to_timezone(prices: List[models.ElectricityPrice], target_tz: str = 
         return prices
     except Exception as e:
         # If timezone conversion fails, return original prices
-        logger.error(f"Timezone conversion failed: {e}")
+        logger.error("Timezone conversion failed: %s", e)
         return prices
 
 
-def ensure_utc(dt: datetime) -> datetime:
-    """Ensure datetime is in UTC."""
+def ensure_utc(dt: datetime, source_timezone: str = "UTC") -> datetime:
+    """
+    Ensure datetime is in UTC.
+
+    Args:
+        dt: The datetime to convert
+        source_timezone: The timezone to assume for naive datetimes
+    """
     if dt.tzinfo is None:
-        # Assume naive datetime is UTC
-        return dt.replace(tzinfo=timezone.utc)
+        # If naive datetime and source timezone is not UTC, treat as source timezone
+        if source_timezone != "UTC":
+            try:
+                tz = ZoneInfo(source_timezone)
+                # Make datetime aware in source timezone, then convert to UTC
+                return dt.replace(tzinfo=tz).astimezone(timezone.utc)
+            except Exception as e:
+                logger.warning("Invalid timezone %s, treating naive datetime as UTC: %s", source_timezone, e)
+                return dt.replace(tzinfo=timezone.utc)
+        else:
+            # Assume naive datetime is UTC
+            return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
@@ -61,13 +77,18 @@ async def get_electricity_price(
         end_date: datetime = Query(
             example=datetime.now(),
         ),
-        timezone_str: str = Query("UTC", description="Response timezone (e.g., 'Europe/Helsinki', 'UTC')"),
+        timezone_str: str = Query("UTC", description="Timezone for input dates (if naive) and response (e.g., 'Europe/Helsinki', 'UTC')"),
         db: Session = Depends(get_db),
 ):
-    """Fetches electricity prices for a given time period."""
-    # Convert input dates to UTC
-    start_date_utc = ensure_utc(start_date)
-    end_date_utc = ensure_utc(end_date)
+    """
+    Fetches electricity prices for a given time period.
+
+    If start_date/end_date are naive (no timezone), they will be interpreted
+    as being in the timezone_str timezone before conversion to UTC for database query.
+    """
+    # Convert input dates to UTC, treating naive datetimes as being in timezone_str
+    start_date_utc = ensure_utc(start_date, timezone_str)
+    end_date_utc = ensure_utc(end_date, timezone_str)
 
     # Query the database for prices (all in UTC) using async CRUD
     prices = await crud.get_electricity_prices(db, start_date_utc, end_date_utc)

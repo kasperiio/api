@@ -74,8 +74,7 @@ class ElectricityPrice(Base):
 
     @price_daily_average_ratio.expression
     def price_daily_average_ratio(cls):
-        """SQL expression for calculating price_daily_average_ratio (UTC-only)."""
-        # Since we're now UTC-only, we can use simple date truncation
+        """SQL expression for calculating price_daily_average_ratio."""
         daily_avg = func.avg(cls.price).over(
             partition_by=func.date(cls.timestamp)
         )

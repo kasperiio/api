@@ -55,7 +55,7 @@ class ProviderManager:
             logger.error("No electricity price providers available!")
         else:
             provider_names = [p.name for p in self._providers]
-            logger.info(f"Initialized providers in order: {provider_names}")
+            logger.info("Initialized providers in order: %s", provider_names)
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -108,18 +108,18 @@ class ProviderManager:
                 break
                 
             try:
-                logger.info(f"Trying provider: {provider.name}")
+                logger.info("Trying provider: %s", provider.name)
                 prices = await provider.get_electricity_price(start_date, end_date)
 
                 if prices:
-                    logger.info(f"Successfully fetched {len(prices)} prices from {provider.name}")
+                    logger.info("Successfully fetched %s prices from %s", len(prices), provider.name)
                     return prices
                 else:
-                    logger.warning(f"Provider {provider.name} returned no data")
+                    logger.warning("Provider %s returned no data", provider.name)
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"Provider {provider.name} failed: {str(e)}")
+                logger.warning("Provider %s failed: %s", provider.name, str(e))
                 
             providers_tried += 1
         
@@ -196,6 +196,3 @@ async def get_electricity_price(
     """
     manager = get_provider_manager()
     return await manager.get_electricity_price(start_date, end_date)
-
-
-

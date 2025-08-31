@@ -98,7 +98,7 @@ class NordpoolClient(ElectricityPriceProvider):
 
         try:
             async with session.get(self.BASE_URL, params=params) as response:
-                logger.debug(f"Nordpool API request: {response.url}")
+                logger.debug("Nordpool API request: %s", response.url)
 
                 if response.status == 204:
                     # No data available for this date
@@ -204,7 +204,7 @@ class NordpoolClient(ElectricityPriceProvider):
         for i, response in enumerate(responses):
             if isinstance(response, Exception):
                 logger.warning(
-                    f"Failed to fetch data for {dates_to_fetch[i]}: {response}"
+                    "Failed to fetch data for %s: %s", dates_to_fetch[i], response
                 )
                 continue
 

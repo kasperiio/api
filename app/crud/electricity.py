@@ -10,14 +10,14 @@ async def get_electricity_prices(
     db: Session, start_date: datetime, end_date: datetime
 ) -> List[models.ElectricityPrice]:
     """
-    Async version of get_electricity_prices that uses the async provider manager.
+    Get electricity prices for the specified time range.
 
     Args:
-        db (Session): The database session.
-        start_date (datetime): The start date of the time range.
-        end_date (datetime): The end date of the time range.
+        db: The database session.
+        start_date: The start date of the time range.
+        end_date: The end date of the time range.
     Returns:
-        List[models.ElectricityPrice]: A list of electricity prices within the specified time range.
+        List of electricity prices within the specified time range.
     """
     # Remove minutes, seconds and microseconds from the dates
     start_date = start_date.replace(minute=0, second=0, microsecond=0)
