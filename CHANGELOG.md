@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.0](https://github.com/kasperiio/api/compare/v0.1.3...v2.0.0) (2025-08-31)
+
+
+### Miscellaneous Chores
+
+* v2 ([fb23bce](https://github.com/kasperiio/api/commit/fb23bced23323ee175ab143ef3fc94d8a9727792))
+
 ## [0.1.3](https://github.com/kasperiio/api/compare/v0.1.2...v0.1.3) (2025-08-31)
 
 
