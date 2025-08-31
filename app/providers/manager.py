@@ -22,13 +22,13 @@ class ProviderManager:
     
     Tries providers in priority order (Nordpool first, then ENTSO-E).
     """
-    
+
     def __init__(self, session: Optional[aiohttp.ClientSession] = None):
         self._session = session
         self._owned_session = session is None
         self._providers: List[ElectricityPriceProvider] = []
         self._initialize_providers()
-    
+
     def _initialize_providers(self):
         """Initialize all available providers in priority order."""
         # Add Nordpool provider (highest priority)
@@ -56,20 +56,20 @@ class ProviderManager:
         else:
             provider_names = [p.name for p in self._providers]
             logger.info("Initialized providers in order: %s", provider_names)
-    
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=60)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
-    
+
     async def _close_session(self):
         """Close the aiohttp session if we own it."""
         if self._owned_session and self._session:
             await self._session.close()
             self._session = None
-    
+
     async def get_electricity_price(
         self,
         start_date: datetime,
@@ -92,21 +92,21 @@ class ProviderManager:
         """
         if not self._providers:
             raise ProviderError("No electricity price providers available")
-        
+
         # Validate input
         if not start_date.tzinfo or not end_date.tzinfo:
             raise ValueError("Dates must be timezone-aware")
-        
+
         if start_date > end_date:
             raise ValueError("Start date must be before end date")
-        
+
         last_error = None
         providers_tried = 0
-        
+
         for provider in self._providers:
             if providers_tried >= max_retries:
                 break
-                
+
             try:
                 logger.info("Trying provider: %s", provider.name)
                 prices = await provider.get_electricity_price(start_date, end_date)
@@ -120,18 +120,16 @@ class ProviderManager:
             except Exception as e:
                 last_error = e
                 logger.warning("Provider %s failed: %s", provider.name, str(e))
-                
+
             providers_tried += 1
-        
+
         # All providers failed
         error_msg = f"All {providers_tried} providers failed"
         if last_error:
             error_msg += f". Last error: {str(last_error)}"
-        
-        raise ProviderError(error_msg)
-    
 
-    
+        raise ProviderError(error_msg)
+
     def get_available_providers(self) -> List[str]:
         """
         Get list of available provider names.
@@ -140,7 +138,7 @@ class ProviderManager:
             List of provider names in priority order
         """
         return [provider.name for provider in self._providers]
-    
+
     def get_provider_count(self) -> int:
         """
         Get the number of available providers.
@@ -149,12 +147,12 @@ class ProviderManager:
             Number of available providers
         """
         return len(self._providers)
-    
+
     async def __aenter__(self):
         """Async context manager entry."""
         await self._get_session()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self._close_session()

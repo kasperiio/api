@@ -182,6 +182,30 @@ async def get_cheapest_hours_today(
 
     return schemas.ElectricityPriceResponse.from_db_model_list(cheapest_hours)
 
+@router.get("/latest", response_model=schemas.ElectricityPriceResponse)
+async def get_latest_electricity_price(
+        timezone_str: str = Query("UTC", description="Response timezone (e.g., 'Europe/Helsinki', 'UTC')"),
+        db: Session = Depends(get_db),
+):
+    """Fetches the todays and tomorrows (if available) electricity prices."""
+    latest_datetime = datetime.now(timezone.utc)
+    normalized_time = latest_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Query the database for the latest price (UTC) using async CRUD
+    # Get today + tomorrow = 48 hours of data
+    end_time = normalized_time + timedelta(days=2) - timedelta(hours=1)
+    prices = await crud.get_electricity_prices(db, normalized_time, end_time)
+
+    if not prices:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Latest price not available"
+        )
+
+    # Convert timestamps to requested timezone
+    prices = convert_to_timezone(prices, timezone_str)
+
+    return schemas.ElectricityPriceResponse.from_db_model_list(prices)
 
 def find_consecutive_cheapest_hours(
         prices: List[models.ElectricityPrice],

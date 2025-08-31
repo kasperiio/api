@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -43,16 +43,43 @@ async def get_electricity_prices(
     existing_hours = {price.timestamp for price in prices}
     missing_hours = expected_hours - existing_hours
 
-    if missing_hours:
+    # Filter out future hours that providers won't have yet
+    # Electricity price data availability:
+    # - Before 13:00 UTC: Only current day data available
+    # - After 13:00 UTC: Current day + next day data available (until ~21:00 UTC next day)
+    current_time = datetime.now(timezone.utc)
+    current_hour = current_time.hour
+
+    if current_hour >= 13:
+        # After 13:00 UTC: next day data is available until 21:00 UTC
+        next_day = current_time.date() + timedelta(days=1)
+        max_available_time = datetime.combine(
+            next_day, datetime.min.time()
+        ).replace(tzinfo=timezone.utc) + timedelta(hours=21)
+    else:
+        # Before 13:00 UTC: only current day data is available
+        max_available_time = current_time.replace(
+            hour=23, minute=59, second=59, microsecond=999999
+        )
+
+    fetchable_missing_hours = {
+        hour for hour in missing_hours
+        if hour <= max_available_time
+    }
+
+    if fetchable_missing_hours:
         try:
             # Use async provider manager
             provider_manager = get_provider_manager()
             new_prices = await provider_manager.get_electricity_price(
-                min(missing_hours), max(missing_hours)
+                min(fetchable_missing_hours), max(fetchable_missing_hours)
             )
 
             # Filter out prices that were outside wanted range
-            new_prices = [price for price in new_prices if price.timestamp in missing_hours]
+            new_prices = [
+                price for price in new_prices
+                if price.timestamp in fetchable_missing_hours
+            ]
 
             # Add new prices to the database
             if new_prices:

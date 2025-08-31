@@ -4,7 +4,7 @@ Base classes and interfaces for electricity price providers.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 from app.models import ElectricityPrice
 
 
