@@ -1,22 +1,27 @@
-from datetime import datetime, timedelta
+"""
+ENTSO-E electricity price provider.
+
+This module provides integration with the ENTSO-E API for fetching
+Finnish electricity spot prices as a fallback provider.
+"""
+
+import logging
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import os
 import pytz
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from fastapi import HTTPException
 
 from app.models import ElectricityPrice
+from .base import ElectricityPriceProvider, ProviderAPIError, ProviderDataError
+
+_LOGGER = logging.getLogger(__name__)
 
 
-class EntsoeAPIError(Exception):
-    """Custom exception for ENTSO-E API errors."""
-    pass
-
-
-class EntsoeClient:
+class EntsoeClient(ElectricityPriceProvider):
     """Client for interacting with the ENTSO-E API."""
 
     BASE_URL = "https://web-api.tp.entsoe.eu/api"
@@ -24,10 +29,9 @@ class EntsoeClient:
     VAT_RATE = 1.255  # 25.5% VAT
 
     def __init__(self, api_key: Optional[str] = None):
+        super().__init__("ENTSO-E")
         self.api_key = api_key or os.getenv("ENTSOE_API_KEY")
-        if not self.api_key:
-            raise EntsoeAPIError("ENTSOE_API_KEY not found in environment variables")
-
+        
         # Configure session with retry logic
         self.session = requests.Session()
         retry_strategy = Retry(
@@ -75,7 +79,7 @@ class EntsoeClient:
 
             return prices
         except ET.ParseError as e:
-            raise EntsoeAPIError(f"Failed to parse XML response: {str(e)}")
+            raise ProviderDataError(f"Failed to parse XML response: {str(e)}")
 
     def _parse_period(self, period: ET.Element, namespace: Dict) -> List[Dict]:
         """Parse a single period from the XML response."""
@@ -116,7 +120,7 @@ class EntsoeClient:
         except (ValueError, TypeError, AttributeError) as e:
             return None
 
-    def get_electricity_price(
+    async def get_electricity_price(
             self,
             start_date: datetime,
             end_date: datetime,
@@ -132,15 +136,15 @@ class EntsoeClient:
             List of ElectricityPrice objects
 
         Raises:
-            EntsoeAPIError: If API request fails
-            HTTPException: If input validation fails
+            ProviderAPIError: If API request fails
+            ProviderDataError: If data parsing fails
         """
         # Validate input
         if not start_date.tzinfo or not end_date.tzinfo:
-            raise HTTPException(status_code=400, detail="Dates must be timezone-aware")
+            raise ValueError("Dates must be timezone-aware")
 
         if start_date > end_date:
-            raise HTTPException(status_code=400, detail="Start date must be before end date")
+            raise ValueError("Start date must be before end date")
 
         params = self._get_request_params(start_date, end_date)
 
@@ -152,9 +156,9 @@ class EntsoeClient:
             )
 
             if response.status_code == 401:
-                raise EntsoeAPIError("Invalid API key")
+                raise ProviderAPIError("Invalid ENTSO-E API key")
             elif response.status_code == 400:
-                raise EntsoeAPIError(f"Bad request: {response.text}")
+                raise ProviderAPIError(f"Bad request: {response.text}")
 
             response.raise_for_status()
 
@@ -162,16 +166,48 @@ class EntsoeClient:
             return [ElectricityPrice(**price) for price in prices]
 
         except requests.exceptions.RequestException as e:
-            raise EntsoeAPIError(f"API request failed: {str(e)}")
+            raise ProviderAPIError(f"ENTSO-E API request failed: {str(e)}")
 
+    def is_available(self) -> bool:
+        """
+        Check if the ENTSO-E provider is available.
+        
+        Returns:
+            True if API key is configured, False otherwise
+        """
+        return self.api_key is not None
 
-# Create a global client instance
-entsoe_client = EntsoeClient()
+    def get_priority(self) -> int:
+        """
+        Get the priority of this provider.
+        
+        Returns:
+            10 (lower priority than Nordpool)
+        """
+        return 10
 
-
-def get_electricity_price(
-        start_date: datetime,
-        end_date: datetime
-) -> List[ElectricityPrice]:
-    """Wrapper function for backward compatibility."""
-    return entsoe_client.get_electricity_price(start_date, end_date)
+    # Synchronous method for backward compatibility
+    def get_electricity_price_sync(
+            self,
+            start_date: datetime,
+            end_date: datetime,
+    ) -> List[ElectricityPrice]:
+        """
+        Synchronous version for backward compatibility.
+        
+        This method maintains the original synchronous interface.
+        """
+        import asyncio
+        
+        try:
+            # Try to get the current event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an async context, we can't use run_until_complete
+                # This is a limitation - in this case, the caller should use the async version
+                raise RuntimeError("Cannot call synchronous method from async context. Use get_electricity_price() instead.")
+            else:
+                return loop.run_until_complete(self.get_electricity_price(start_date, end_date))
+        except RuntimeError:
+            # No event loop exists, create a new one
+            return asyncio.run(self.get_electricity_price(start_date, end_date))

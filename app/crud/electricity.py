@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import List
 from sqlalchemy.orm import Session
 
-from app.utils import external
+from app.providers import get_provider_manager, ProviderError
 from app import models
 
 def get_electricity_prices(
@@ -43,8 +43,9 @@ def get_electricity_prices(
         all_prices = prices
     else:
         try:
-            # Fetch missing data from ENTSO-E API
-            new_prices = external.get_electricity_price(
+            # Fetch missing data using provider manager (Nordpool + ENTSO-E fallback)
+            manager = get_provider_manager()
+            new_prices = manager.get_electricity_price_sync(
                 min(missing_hours), max(missing_hours) + timedelta(hours=1)
             )
 
@@ -60,9 +61,9 @@ def get_electricity_prices(
             # Merge existing and new prices
             all_prices = prices + new_prices
             all_prices.sort(key=lambda x: x.timestamp)
-        except Exception as e:
+        except (ProviderError, Exception) as e:
             db.rollback()
-            # If external API fails, return what we have from the database
+            # If all providers fail, return what we have from the database
             all_prices = prices
             all_prices.sort(key=lambda x: x.timestamp)
 
