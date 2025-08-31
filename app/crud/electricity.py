@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from app.providers import get_provider_manager, ProviderError
 from app import models
@@ -21,15 +22,14 @@ def get_electricity_prices(
     start_date = start_date.replace(minute=0, second=0, microsecond=0)
     end_date = end_date.replace(minute=0, second=0, microsecond=0)
 
-    # Query existing prices from database
-    prices = (
-        db.query(models.ElectricityPrice)
-        .filter(
-            models.ElectricityPrice.timestamp >= start_date,
-            models.ElectricityPrice.timestamp <= end_date,
-        )
-        .all()
-    )
+    # Query existing prices from database using SQLAlchemy 2.0 select
+    stmt = select(models.ElectricityPrice).where(
+        models.ElectricityPrice.timestamp >= start_date,
+        models.ElectricityPrice.timestamp <= end_date,
+    ).order_by(models.ElectricityPrice.timestamp)
+
+    result = db.execute(stmt)
+    prices = result.scalars().all()
 
     # Find missing hours
     existing_timestamps = set(price.timestamp for price in prices)
@@ -68,13 +68,3 @@ def get_electricity_prices(
             all_prices.sort(key=lambda x: x.timestamp)
 
     return all_prices
-
-# Optional: Keep the service class for future use
-class ElectricityPriceService:
-    def __init__(self, db: Session):
-        self.db = db
-
-    def get_electricity_prices(
-        self, start_date: datetime, end_date: datetime
-    ) -> List[models.ElectricityPrice]:
-        return get_electricity_prices(self.db, start_date, end_date)

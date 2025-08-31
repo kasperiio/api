@@ -1,7 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import os
-import pytz
 from sqlalchemy import Column, Float, case, types
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -76,11 +74,10 @@ class ElectricityPrice(Base):
 
     @price_daily_average_ratio.expression
     def price_daily_average_ratio(cls):
-        """SQL expression for calculating price_daily_average_ratio."""
-        tz = pytz.timezone(os.getenv("TZ", "UTC"))
-
+        """SQL expression for calculating price_daily_average_ratio (UTC-only)."""
+        # Since we're now UTC-only, we can use simple date truncation
         daily_avg = func.avg(cls.price).over(
-            partition_by=func.date_trunc('day', func.timezone(tz.zone, cls.timestamp))
+            partition_by=func.date(cls.timestamp)
         )
 
         return case(

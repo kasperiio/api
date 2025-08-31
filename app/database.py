@@ -1,8 +1,15 @@
+"""
+Database configuration and session management.
+
+This module provides SQLAlchemy database setup with modern 2.0 patterns
+for the electricity price API.
+"""
+
+from pathlib import Path
 from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-from pathlib import Path
 
 # Ensure data directory exists
 Path("./data").mkdir(exist_ok=True)
@@ -31,6 +38,7 @@ def get_db() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
+        db.commit()
         db.close()
 
 def init_db() -> None:

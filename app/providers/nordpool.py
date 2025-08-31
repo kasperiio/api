@@ -7,11 +7,15 @@ Finnish electricity spot prices.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import aiohttp
-import pytz
 from dateutil.parser import parse as parse_dt
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    # Fallback for Python < 3.9 or Windows
+    from dateutil.tz import gettz as ZoneInfo
 
 from app.models import ElectricityPrice
 from .base import ElectricityPriceProvider, ProviderAPIError, ProviderDataError
@@ -47,11 +51,11 @@ class NordpoolClient(ElectricityPriceProvider):
     
     def _parse_dt(self, time_str: str) -> datetime:
         """Parse datetimes to UTC from Stockholm time, which Nord Pool uses."""
-        stockholm_tz = pytz.timezone("Europe/Stockholm")
+        stockholm_tz = ZoneInfo("Europe/Stockholm")
         time = parse_dt(time_str)
         if time.tzinfo is None:
-            time = stockholm_tz.localize(time)
-        return time.astimezone(pytz.UTC)
+            time = time.replace(tzinfo=stockholm_tz)
+        return time.astimezone(timezone.utc)
     
     def _calculate_price(self, raw_price: float) -> float:
         """
@@ -179,17 +183,14 @@ class NordpoolClient(ElectricityPriceProvider):
         if start_date > end_date:
             raise ValueError("Start date must be before end date")
         
-        # Convert to Finnish timezone for date calculation
-        finnish_tz = pytz.timezone("Europe/Helsinki")
-        start_local = start_date.astimezone(finnish_tz)
-        end_local = end_date.astimezone(finnish_tz)
-        
-        # Get all dates we need to fetch
-        current_date = start_local.date()
-        end_date_local = end_local.date()
+        # Get all UTC dates we need to fetch
+        start_utc_date = start_date.date()
+        end_utc_date = end_date.date()
+
         dates_to_fetch = []
-        
-        while current_date <= end_date_local:
+        current_date = start_utc_date
+
+        while current_date <= end_utc_date:
             dates_to_fetch.append(datetime.combine(current_date, datetime.min.time()))
             current_date += timedelta(days=1)
         
@@ -207,16 +208,10 @@ class NordpoolClient(ElectricityPriceProvider):
                 prices = self._parse_response(response)
                 all_prices.extend(prices)
         
-        # Filter prices to the requested time range
-        filtered_prices = [
-            price for price in all_prices
-            if start_date <= price.timestamp <= end_date
-        ]
-        
-        # Sort by timestamp
-        filtered_prices.sort(key=lambda x: x.timestamp)
-        
-        return filtered_prices
+        # Sort by timestamp and return all fetched prices
+        all_prices.sort(key=lambda x: x.timestamp)
+
+        return all_prices
     
     def is_available(self) -> bool:
         """

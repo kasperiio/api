@@ -7,10 +7,9 @@ Finnish electricity spot prices as a fallback provider.
 
 import logging
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import os
-import pytz
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -52,7 +51,7 @@ class EntsoeClient(ElectricityPriceProvider):
             Formatted string in YYYYMMDDHHMM format
         """
         # Convert to UTC if not already
-        utc_dt = dt.astimezone(pytz.UTC)
+        utc_dt = dt.astimezone(timezone.utc)
         return utc_dt.strftime("%Y%m%d%H%M")
 
     def _get_request_params(self, start_date: datetime, end_date: datetime) -> Dict:
@@ -85,7 +84,7 @@ class EntsoeClient(ElectricityPriceProvider):
         """Parse a single period from the XML response."""
         try:
             start = period.find(".//ns:start", namespace).text
-            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc)
+            start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
 
             prices = []
             for point in period.findall(".//ns:Point", namespace):
