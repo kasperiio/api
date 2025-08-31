@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/kasperiio/api/compare/v0.1.2...v0.1.3) (2025-08-31)
+
+
+### Reverts
+
+* docker build escaped dots ([4650e97](https://github.com/kasperiio/api/commit/4650e9748cf9497c6a68996ec0a77cb814e60288))
+
 ## [0.1.2](https://github.com/kasperiio/api/compare/v0.1.1...v0.1.2) (2025-08-31)
 
 
