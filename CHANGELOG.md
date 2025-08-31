@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0](https://github.com/kasperiio/api/compare/v0.0.14...v0.1.0) (2025-08-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* use utc times throught, api handles conversion
+
+### Features
+
+* nordpool api prioritization ([6d3b7c9](https://github.com/kasperiio/api/commit/6d3b7c9b8a507e988ec10492131814a76b634867))
+
+
+### Code Refactoring
+
+* use utc times throught, api handles conversion ([af6f80a](https://github.com/kasperiio/api/commit/af6f80a870c9b0f5c7b5611697202ea9736360ac))
+
 ## [0.0.14](https://github.com/kasperiio/api/compare/v0.0.13...v0.0.14) (2024-11-11)
 
 
