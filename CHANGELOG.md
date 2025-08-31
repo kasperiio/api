@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/kasperiio/api/compare/v0.1.1...v0.1.2) (2025-08-31)
+
+
+### Bug Fixes
+
+* naive timezones treated as timezone_str, code cleanup ([38009eb](https://github.com/kasperiio/api/commit/38009ebc049fc9a1b92ace9726781a841c6ae88f))
+
 ## [0.1.1](https://github.com/kasperiio/api/compare/v0.1.0...v0.1.1) (2025-08-31)
 
 
