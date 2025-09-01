@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/kasperiio/api/compare/v2.1.0...v2.2.0) (2025-09-01)
+
+
+### Features
+
+* 15 minute interval support ([97b5a2e](https://github.com/kasperiio/api/commit/97b5a2ed222f60f10928eb5cf9990087b8f70f5e))
+
 ## [2.1.0](https://github.com/kasperiio/api/compare/v2.0.0...v2.1.0) (2025-08-31)
 
 
