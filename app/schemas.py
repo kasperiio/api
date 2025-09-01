@@ -1,37 +1,24 @@
 from datetime import datetime
-from typing import Dict, List
+from typing import List
 from pydantic import BaseModel, ConfigDict, Field, RootModel, validator
 
 from app.models import ElectricityPrice
 
 
-class PriceData(BaseModel):
-    """Schema for price data at a specific time."""
-
+class PricePoint(BaseModel):
+    timestamp: datetime = Field(..., description="Timestamp for the price")
     price: float = Field(..., description="Electricity price")
-    price_daily_average_ratio: float = Field(
-        ...,
-        description="Ratio of price to daily average"
-    )
 
 
-class ElectricityPriceResponse(RootModel[Dict[datetime, PriceData]]):
-    """Response schema for electricity price endpoints."""
-
+class ElectricityPriceResponse(RootModel[List[PricePoint]]):
     model_config = ConfigDict(
         json_encoders={datetime: lambda v: v.isoformat()},
         from_attributes=True,
         json_schema_extra={
-            "example": {
-                "2024-01-01T12:00:00+00:00": {
-                    "price": 50.0,
-                    "price_daily_average_ratio": 1.2,
-                },
-                "2024-01-01T13:00:00+00:00": {
-                    "price": 45.0,
-                    "price_daily_average_ratio": -0.9,
-                }
-            }
+            "example": [
+                {"timestamp": "2024-01-01T12:00:00+00:00", "price": 50.0},
+                {"timestamp": "2024-01-01T12:15:00+00:00", "price": 45.0}
+            ]
         },
     )
 
@@ -40,43 +27,37 @@ class ElectricityPriceResponse(RootModel[Dict[datetime, PriceData]]):
             cls,
             db_models: List['ElectricityPrice']
     ) -> 'ElectricityPriceResponse':
-        """Convert database models to response schema.
-
-        Args:
-            db_models: List of database models
-
-        Returns:
-            ElectricityPriceResponse: Response schema instance
-        """
-        data_dict = {
-            model.timestamp: PriceData(
-                price=model.price,
-                price_daily_average_ratio=model.price_daily_average_ratio,
-            )
+        return cls([
+            PricePoint(timestamp=model.timestamp, price=model.price)
             for model in db_models
-        }
-
-        return cls(data_dict)
+        ])
 
 
-class ElectricityPriceCreate(BaseModel):
-    """Schema for creating new price entries."""
-
-    timestamp: datetime = Field(..., description="Timestamp for the price")
-    price: float = Field(..., description="Electricity price")
-
-    @validator('timestamp')
-    def timestamp_must_be_aware(cls, v: datetime) -> datetime:
-        """Ensure timestamp has timezone information."""
-        if v.tzinfo is None:
-            raise ValueError("Timestamp must be timezone-aware")
-        return v
+class ElectricityLatestResponse(BaseModel):
+    current: PricePoint
+    prices: List[PricePoint]
 
     model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()},
+        from_attributes=True,
         json_schema_extra={
             "example": {
-                "timestamp": "2024-01-01T12:00:00+00:00",
-                "price": 50.0
+                "current": {"timestamp": "2024-01-01T12:15:00+00:00", "price": 47.5},
+                "prices": [
+                    {"timestamp": "2024-01-01T12:00:00+00:00", "price": 50.0},
+                    {"timestamp": "2024-01-01T12:15:00+00:00", "price": 47.5}
+                ]
             }
-        }
+        },
     )
+
+    @classmethod
+    def from_db_models(
+        cls,
+        db_models: List['ElectricityPrice'],
+        current_model: 'ElectricityPrice'
+    ) -> 'ElectricityLatestResponse':
+        return cls(
+            current=PricePoint(timestamp=current_model.timestamp, price=current_model.price),
+            prices=[PricePoint(timestamp=m.timestamp, price=m.price) for m in db_models]
+        )

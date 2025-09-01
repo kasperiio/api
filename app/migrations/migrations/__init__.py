@@ -4,7 +4,6 @@ Migration definitions.
 
 from typing import List
 from ..runner import Migration
-from .m001_utc_conversion import UTCConversionMigration
 
 
 def get_all_migrations() -> List[Migration]:
@@ -15,5 +14,4 @@ def get_all_migrations() -> List[Migration]:
         List of migrations to be applied
     """
     return [
-        UTCConversionMigration(),
     ]
