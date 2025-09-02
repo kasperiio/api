@@ -46,24 +46,32 @@ async def get_electricity_prices(
     existing_intervals = {price.timestamp for price in prices}
     missing_intervals = expected_intervals - existing_intervals
 
-    # Filter out future hours that providers won't have yet
-    # Electricity price data availability:
-    # - Before 13:00 UTC: Only current day data available
-    # - After 13:00 UTC: Current day + next day data available (until ~21:00 UTC next day)
-    current_time = datetime.now(timezone.utc)
-    current_hour = current_time.hour
+    # Filter out future intervals that providers won't have yet
+    # Electricity price data availability (based on Europe/Stockholm market time):
+    # - Before 14:00 Stockholm: Only current day data available
+    # - After 14:00 Stockholm: Current day + next day data available (until ~21:00 next day)
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from dateutil.tz import gettz as ZoneInfo
 
-    if current_hour >= 13:
-        # After 13:00 UTC: next day data is available until 21:00 UTC
-        next_day = current_time.date() + timedelta(days=1)
-        max_available_time = datetime.combine(
-            next_day, datetime.min.time()
-        ).replace(tzinfo=timezone.utc) + timedelta(hours=21)
+    stockholm_tz = ZoneInfo("Europe/Stockholm")
+    current_stockholm = datetime.now(stockholm_tz)
+    current_stockholm_hour = current_stockholm.hour
+
+    if current_stockholm_hour >= 14:
+        # After 14:00 Stockholm: next day data available until 21:00 next day Stockholm
+        next_day_stockholm = current_stockholm.date() + timedelta(days=1)
+        max_available_stockholm = datetime.combine(
+            next_day_stockholm, datetime.min.time()
+        ).replace(tzinfo=stockholm_tz) + timedelta(hours=21)
+        max_available_time = max_available_stockholm.astimezone(timezone.utc)
     else:
-        # Before 13:00 UTC: only current day data is available
-        max_available_time = current_time.replace(
+        # Before 14:00 Stockholm: only current Stockholm day available
+        end_of_day_stockholm = current_stockholm.replace(
             hour=23, minute=59, second=59, microsecond=999999
         )
+        max_available_time = end_of_day_stockholm.astimezone(timezone.utc)
 
     fetchable_missing_intervals = {
         ts for ts in missing_intervals
@@ -88,7 +96,10 @@ async def get_electricity_prices(
                     base = p.timestamp.replace(minute=0, second=0, microsecond=0)
                     for offset in (0, 15, 30, 45):
                         ts = base.replace(minute=offset)
-                        expanded_prices.append(models.ElectricityPrice(timestamp=ts, price=p.price))
+                        expanded_price = models.ElectricityPrice()
+                        expanded_price.timestamp = ts
+                        expanded_price.price = p.price
+                        expanded_prices.append(expanded_price)
             else:
                 expanded_prices = provider_prices
 
