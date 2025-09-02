@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/kasperiio/api/compare/v2.2.1...v2.2.2) (2025-09-02)
+
+
+### Bug Fixes
+
+* provider data availabilty filter based on europe/stockholm instead of utc ([c314411](https://github.com/kasperiio/api/commit/c3144110860b56988c307e4a798ab120b47feb5c))
+
 ## [2.2.1](https://github.com/kasperiio/api/compare/v2.2.0...v2.2.1) (2025-09-01)
 
 
