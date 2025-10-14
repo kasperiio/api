@@ -20,7 +20,7 @@ RUN poetry install --only main --no-interaction --no-ansi --no-root
 COPY . .
 
 # Install the project itself now that all files are present
-RUN poetry install --only main --no-interaction --no-ansi --only-root
+RUN poetry install --no-interaction --no-ansi --only-root
 
 # Expose the port the app runs on
 EXPOSE 8000
