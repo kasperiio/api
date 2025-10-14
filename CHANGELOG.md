@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.3](https://github.com/kasperiio/api/compare/v3.0.2...v3.0.3) (2025-10-14)
+
+
+### Bug Fixes
+
+* fix build again, hopefully ([51c280c](https://github.com/kasperiio/api/commit/51c280c79d9b1d402919fd27649d4aef9737d9ec))
+
 ## [3.0.2](https://github.com/kasperiio/api/compare/v3.0.1...v3.0.2) (2025-10-14)
 
 
