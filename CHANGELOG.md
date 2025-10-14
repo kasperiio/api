@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2](https://github.com/kasperiio/api/compare/v3.0.1...v3.0.2) (2025-10-14)
+
+
+### Bug Fixes
+
+* release build with poetry ([9018646](https://github.com/kasperiio/api/commit/9018646e739cd9be0a252b3a59636941554a723c))
+
 ## [3.0.1](https://github.com/kasperiio/api/compare/v3.0.0...v3.0.1) (2025-10-14)
 
 
