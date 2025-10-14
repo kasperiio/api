@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/kasperiio/api/compare/v2.2.2...v3.0.0) (2025-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* Nordpool provider has been removed as it now requires authentication
+
+### Code Refactoring
+
+* remove Nordpool provider and simplify data fetching ([f014853](https://github.com/kasperiio/api/commit/f014853c4a57c5519c79f656ee63a158d161dff1))
+
 ## [2.2.2](https://github.com/kasperiio/api/compare/v2.2.1...v2.2.2) (2025-09-02)
 
 
