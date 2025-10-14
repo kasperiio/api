@@ -30,13 +30,16 @@ class ElectricityPrice(Base):
     __tablename__ = "electricity_prices"
 
     timestamp = Column(TZDateTime, index=True, primary_key=True)
-    price = Column(Float, nullable=False)
+    price = Column(Float, nullable=True)  # NULL indicates data unavailable from all providers
 
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ElectricityPrice):
             return NotImplemented
         return self.timestamp == other.timestamp
+
+    def __hash__(self) -> int:
+        return hash(self.timestamp)
 
     def __repr__(self) -> str:
         return (

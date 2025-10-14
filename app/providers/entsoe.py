@@ -6,12 +6,12 @@ Finnish electricity spot prices as a fallback provider.
 """
 
 import xml.etree.ElementTree as ET
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import os
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import httpx
 
 from app.logging_config import logger
 from app.models import ElectricityPrice
@@ -25,19 +25,44 @@ class EntsoeClient(ElectricityPriceProvider):
     FINLAND_DOMAIN = "10YFI-1--------U"
     VAT_RATE = 1.255  # 25.5% VAT
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, client: Optional[httpx.AsyncClient] = None):
         super().__init__("ENTSO-E")
         self.api_key = api_key or os.getenv("ENTSOE_API_KEY")
-        
-        # Configure session with retry logic
-        self.session = requests.Session()
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=[500, 502, 503, 504],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("https://", adapter)
+        self._client = client
+        self._owned_client = client is None
+
+        # Simple rate limiting: track last request time
+        # 10 requests per second - ENTSO-E allows more but we'll be conservative
+        self._last_request_time = 0.0
+        self._min_request_interval = 0.1  # seconds (10 requests per second)
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create httpx client."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=60.0,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                follow_redirects=True
+            )
+        return self._client
+
+    async def _wait_for_rate_limit(self):
+        """Wait if necessary to respect rate limiting."""
+        current_time = time.time()
+        time_since_last_request = current_time - self._last_request_time
+
+        if time_since_last_request < self._min_request_interval:
+            wait_time = self._min_request_interval - time_since_last_request
+            logger.debug("Rate limiting: waiting %.2f seconds", wait_time)
+            await asyncio.sleep(wait_time)
+
+        self._last_request_time = time.time()
+
+    async def _close_client(self):
+        """Close the httpx client if we own it."""
+        if self._owned_client and self._client:
+            await self._client.aclose()
+            self._client = None
 
     def _format_date(self, dt: datetime) -> str:
         """Format datetime for ENTSO-E API.
@@ -143,26 +168,45 @@ class EntsoeClient(ElectricityPriceProvider):
         if start_date > end_date:
             raise ValueError("Start date must be before end date")
 
+        # ENTSO-E API has a 1-year limit per request
+        # Warn if the range is too large (should be handled by chunking in manager)
+        days_diff = (end_date - start_date).days
+        if days_diff > 365:
+            logger.warning(
+                "ENTSO-E request spans %d days (>365). API may truncate results. "
+                "Consider using smaller chunks in the manager.",
+                days_diff
+            )
+
         params = self._get_request_params(start_date, end_date)
+        client = await self._get_client()
+
+        # Apply rate limiting - wait if needed
+        await self._wait_for_rate_limit()
 
         try:
-            response = self.session.get(
-                self.BASE_URL,
-                params=params,
-                timeout=60
-            )
+            logger.info("Fetching data from ENTSO-E API for %s to %s", start_date, end_date)
+
+            response = await client.get(self.BASE_URL, params=params)
+            logger.debug("ENTSO-E API request: %s", response.url)
 
             if response.status_code == 401:
                 raise ProviderAPIError("Invalid ENTSO-E API key")
             elif response.status_code == 400:
                 raise ProviderAPIError(f"Bad request: {response.text}")
+            elif response.status_code == 429:
+                raise ProviderAPIError("ENTSO-E API rate limit exceeded")
 
-            response.raise_for_status()
+            if response.status_code != 200:
+                raise ProviderAPIError(f"ENTSO-E API returned status {response.status_code}: {response.text}")
 
-            prices = self._parse_xml_response(response.text)
+            xml_content = response.text
+            prices = self._parse_xml_response(xml_content)
+
+            logger.info("Successfully fetched %d prices from ENTSO-E", len(prices))
             return [ElectricityPrice(**price) for price in prices]
 
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             raise ProviderAPIError(f"ENTSO-E API request failed: {str(e)}")
 
     def is_available(self) -> bool:
@@ -177,10 +221,19 @@ class EntsoeClient(ElectricityPriceProvider):
     def get_priority(self) -> int:
         """
         Get the priority of this provider.
-        
+
         Returns:
             10 (lower priority than Nordpool)
         """
-        return 10
+        return 0
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self._get_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self._close_client()
 
 

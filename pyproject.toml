@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "api"
+version = "0.1.0"
+description = "Electricity Price API"
+authors = ["kasperiio"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.119.0"
+uvicorn = "^0.37.0"
+sqlalchemy = "^2.0.44"
+requests = "^2.32.5"
+pydantic = "^2.12.1"
+python-dotenv = "^1.1.1"
+python-dateutil = "^2.9.0.post0"
+tzdata = "^2025.2"
+pyyaml = "^6.0.3"
+httpx = "^0.28.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

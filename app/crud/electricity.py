@@ -46,53 +46,35 @@ async def get_electricity_prices(
     existing_intervals = {price.timestamp for price in prices}
     missing_intervals = expected_intervals - existing_intervals
 
-    # Filter out future intervals that providers won't have yet
-    # Electricity price data availability (based on Europe/Stockholm market time):
-    # - Before 14:00 Stockholm: Only current day data available
-    # - After 14:00 Stockholm: Current day + next day data available (until ~21:00 next day)
-    try:
-        from zoneinfo import ZoneInfo
-    except ImportError:
-        from dateutil.tz import gettz as ZoneInfo
-
-    stockholm_tz = ZoneInfo("Europe/Stockholm")
-    current_stockholm = datetime.now(stockholm_tz)
-    current_stockholm_hour = current_stockholm.hour
-
-    if current_stockholm_hour >= 14:
-        # After 14:00 Stockholm: next day data available until 21:00 next day Stockholm
-        next_day_stockholm = current_stockholm.date() + timedelta(days=1)
-        max_available_stockholm = datetime.combine(
-            next_day_stockholm, datetime.min.time()
-        ).replace(tzinfo=stockholm_tz) + timedelta(hours=21)
-        max_available_time = max_available_stockholm.astimezone(timezone.utc)
-    else:
-        # Before 14:00 Stockholm: only current Stockholm day available
-        end_of_day_stockholm = current_stockholm.replace(
-            hour=23, minute=59, second=59, microsecond=999999
-        )
-        max_available_time = end_of_day_stockholm.astimezone(timezone.utc)
-
-    fetchable_missing_intervals = {
-        ts for ts in missing_intervals
-        if ts <= max_available_time
-    }
-
-    if fetchable_missing_intervals:
+    if missing_intervals:
         try:
-            # Use async provider manager
             provider_manager = get_provider_manager()
-            provider_prices = await provider_manager.get_electricity_price(
-                min(fetchable_missing_intervals), max(fetchable_missing_intervals)
+
+            import logging
+            logger = logging.getLogger("app")
+
+            # Fetch the entire missing range in one request
+            # The provider manager handles chunking internally (30-day chunks)
+            min_ts = min(missing_intervals)
+            max_ts = max(missing_intervals)
+
+            logger.info(
+                "Fetching %d missing intervals from %s to %s",
+                len(missing_intervals), min_ts, max_ts
             )
 
+            # Fetch data from provider
+            # If the provider fails (network error, API down, etc.), this will raise ProviderError
+            # and we won't insert NULL values - the error will propagate to the caller
+            all_provider_prices = await provider_manager.get_electricity_price(min_ts, max_ts)
+
             # Expand hourly provider data into 15-minute intervals when needed
-            minutes_set = {p.timestamp.minute for p in provider_prices}
-            is_hourly = len(provider_prices) > 0 and minutes_set == {0}
+            minutes_set = {p.timestamp.minute for p in all_provider_prices}
+            is_hourly = len(all_provider_prices) > 0 and minutes_set == {0}
 
             expanded_prices = []
             if is_hourly:
-                for p in provider_prices:
+                for p in all_provider_prices:
                     base = p.timestamp.replace(minute=0, second=0, microsecond=0)
                     for offset in (0, 15, 30, 45):
                         ts = base.replace(minute=offset)
@@ -101,29 +83,101 @@ async def get_electricity_prices(
                         expanded_price.price = p.price
                         expanded_prices.append(expanded_price)
             else:
-                expanded_prices = provider_prices
+                expanded_prices = all_provider_prices
 
-            # Filter out prices that were outside wanted range
+            # Filter to only include missing timestamps
             new_prices = [
                 price for price in expanded_prices
-                if price.timestamp in fetchable_missing_intervals
+                if price.timestamp in missing_intervals
             ]
 
-            # Add new prices to the database
-            if new_prices:
-                for new_price in new_prices:
-                    db.add(new_price)
-                db.commit()
+            logger.info("Provider returned %d prices, %d are new", len(all_provider_prices), len(new_prices))
 
-            # Merge existing and new prices
-            all_prices = prices + new_prices
+            # SQLite has a limit on SQL variables (default 999-32766)
+            # With 2 params per row (timestamp, price), batch at 500 rows = 1000 params
+            batch_size = 500
+
+            # Bulk insert with SQLite's INSERT OR IGNORE to handle duplicates
+            if new_prices:
+                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                total_inserted = 0
+
+                for i in range(0, len(new_prices), batch_size):
+                    batch = new_prices[i:i + batch_size]
+
+                    # Convert to dict for bulk insert
+                    price_dicts = [
+                        {"timestamp": p.timestamp, "price": p.price}
+                        for p in batch
+                    ]
+
+                    # Use INSERT OR IGNORE for SQLite
+                    stmt = sqlite_insert(models.ElectricityPrice).values(price_dicts)
+                    stmt = stmt.on_conflict_do_nothing(index_elements=['timestamp'])
+
+                    db.execute(stmt)
+                    total_inserted += len(batch)
+
+                db.commit()
+                logger.info("Inserted %d new prices into database", total_inserted)
+
+            # Check if there are still missing intervals after successful fetch
+            # This happens when the provider successfully returns data, but some timestamps
+            # are genuinely missing from their database (e.g., ENTSO-E has incomplete data).
+            # We insert NULL placeholders ONLY when the provider succeeded but returned incomplete data.
+            # If the provider failed (network error, API down), the exception above will be raised
+            # and we won't reach this code - no NULL values will be inserted.
+            fetched_timestamps = {p.timestamp for p in new_prices}
+            still_missing = missing_intervals - fetched_timestamps
+
+            if still_missing:
+                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                logger.warning(
+                    "Data unavailable for %d intervals from all providers, inserting NULL placeholders",
+                    len(still_missing)
+                )
+
+                # Insert NULL prices for unavailable data to prevent repeated fetching
+                null_prices = []
+                for ts in still_missing:
+                    null_price = models.ElectricityPrice()
+                    null_price.timestamp = ts
+                    null_price.price = None  # NULL indicates data unavailable
+                    null_prices.append(null_price)
+
+                # Insert NULL prices in batches
+                if null_prices:
+                    for i in range(0, len(null_prices), batch_size):
+                        batch = null_prices[i:i + batch_size]
+                        price_dicts = [
+                            {"timestamp": p.timestamp, "price": p.price}
+                            for p in batch
+                        ]
+                        stmt = sqlite_insert(models.ElectricityPrice).values(price_dicts)
+                        stmt = stmt.on_conflict_do_nothing(index_elements=['timestamp'])
+                        db.execute(stmt)
+
+                    db.commit()
+                    logger.info("Inserted %d NULL placeholders for unavailable data", len(null_prices))
+
+                    # Add to new_prices for the final merge
+                    new_prices.extend(null_prices)
+
+            # Merge existing and new prices, using set to deduplicate
+            all_prices = list(set(prices) | set(new_prices))
             all_prices.sort(key=lambda x: x.timestamp)
-        except (ProviderError, Exception):
+
+        except (ProviderError, Exception) as e:
+            logger.error("Provider error: %s", str(e))
             db.rollback()
             # If all providers fail, return what we have from the database
-            all_prices = prices
+            all_prices = list(prices)
             all_prices.sort(key=lambda x: x.timestamp)
     else:
-        all_prices = prices
+        # Deduplicate prices from database (in case of DST transitions)
+        all_prices = list(set(prices))
+        all_prices.sort(key=lambda x: x.timestamp)
 
     return all_prices

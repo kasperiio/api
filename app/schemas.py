@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, RootModel, validator
 
 from app.models import ElectricityPrice
@@ -7,7 +7,7 @@ from app.models import ElectricityPrice
 
 class PricePoint(BaseModel):
     timestamp: datetime = Field(..., description="Timestamp for the price")
-    price: float = Field(..., description="Electricity price")
+    price: Optional[float] = Field(..., description="Electricity price (null if unavailable from all providers)")
 
 
 class ElectricityPriceResponse(RootModel[List[PricePoint]]):
