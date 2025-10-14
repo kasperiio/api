@@ -13,11 +13,14 @@ COPY pyproject.toml poetry.lock* ./
 # Configure Poetry to not create a virtual environment (we're already in a container)
 RUN poetry config virtualenvs.create false
 
-# Install dependencies (only production dependencies, no dev dependencies)
-RUN poetry install --only main --no-interaction --no-ansi
+# Install dependencies only (don't install the project itself yet)
+RUN poetry install --only main --no-interaction --no-ansi --no-root
 
 # Copy the rest of the application code into the container
 COPY . .
+
+# Install the project itself now that all files are present
+RUN poetry install --only main --no-interaction --no-ansi --only-root
 
 # Expose the port the app runs on
 EXPOSE 8000
