@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.5](https://github.com/kasperiio/api/compare/v3.0.4...v3.0.5) (2025-10-16)
+
+
+### Bug Fixes
+
+* take entsoe-e variables scoped blocks into account, restore prefetch filtering that was removed with refactor ([86fc382](https://github.com/kasperiio/api/commit/86fc382bb578fcc9f8240656685820b2459e7040))
+
 ## [3.0.4](https://github.com/kasperiio/api/compare/v3.0.3...v3.0.4) (2025-10-14)
 
 
