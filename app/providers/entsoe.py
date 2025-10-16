@@ -96,30 +96,85 @@ class EntsoeClient(ElectricityPriceProvider):
             prices = []
 
             for timeseries in root.findall(".//ns:TimeSeries", namespace):
+                # Check for curveType (A03 = variable sized blocks)
+                curve_type_elem = timeseries.find(".//ns:curveType", namespace)
+                curve_type = curve_type_elem.text if curve_type_elem is not None else None
+
                 for period in timeseries.findall(".//ns:Period", namespace):
-                    prices.extend(self._parse_period(period, namespace))
+                    prices.extend(self._parse_period(period, namespace, curve_type))
 
             return prices
         except ET.ParseError as e:
             raise ProviderDataError(f"Failed to parse XML response: {str(e)}")
 
-    def _parse_period(self, period: ET.Element, namespace: Dict) -> List[Dict]:
-        """Parse a single period from the XML response."""
+    def _parse_period(self, period: ET.Element, namespace: Dict, curve_type: Optional[str] = None) -> List[Dict]:
+        """Parse a single period from the XML response.
+
+        Args:
+            period: XML element containing the period data
+            namespace: XML namespace dictionary
+            curve_type: Curve type (A03 = variable sized blocks, A01 = sequential)
+        """
         try:
             start = period.find(".//ns:start", namespace).text
             start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
 
-            prices = []
-            for point in period.findall(".//ns:Point", namespace):
-                price_data = self._parse_point(point, start_dt, namespace)
-                if price_data:
-                    prices.append(price_data)
+            end = period.find(".//ns:end", namespace).text
+            end_dt = datetime.strptime(end, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
 
-            return prices
-        except (AttributeError, ValueError) as e:
+            # Parse resolution (e.g., "PT60M" for hourly, "PT15M" for 15-minute)
+            resolution_elem = period.find(".//ns:resolution", namespace)
+            if resolution_elem is not None:
+                resolution = resolution_elem.text
+                # Extract minutes from resolution string (e.g., "PT15M" -> 15)
+                if resolution.startswith("PT") and resolution.endswith("M"):
+                    interval_minutes = int(resolution[2:-1])
+                else:
+                    interval_minutes = 60  # Default to hourly
+            else:
+                interval_minutes = 60  # Default to hourly
+
+            # Parse all points into a dictionary keyed by position
+            points_by_position = {}
+            for point in period.findall(".//ns:Point", namespace):
+                price_data = self._parse_point(point, start_dt, interval_minutes, namespace)
+                if price_data:
+                    position = int(point.find("ns:position", namespace).text)
+                    points_by_position[position] = price_data
+
+            # If curveType is A03 (variable sized blocks), fill in missing positions
+            # with the price from the previous position
+            if curve_type == "A03" and points_by_position:
+                # Calculate expected number of intervals
+                total_minutes = int((end_dt - start_dt).total_seconds() / 60)
+                expected_intervals = total_minutes // interval_minutes
+
+                prices = []
+                last_price = None
+
+                for position in range(1, expected_intervals + 1):
+                    if position in points_by_position:
+                        # Use the actual price from this position
+                        price_data = points_by_position[position]
+                        last_price = price_data["price"]
+                        prices.append(price_data)
+                    elif last_price is not None:
+                        # Fill with the previous price (variable sized block)
+                        timestamp = start_dt + timedelta(minutes=interval_minutes * (position - 1))
+                        prices.append({
+                            "timestamp": timestamp,
+                            "price": last_price,
+                        })
+
+                return prices
+            else:
+                # For other curve types (or if no curve type), just return the points we have
+                return list(points_by_position.values())
+
+        except (AttributeError, ValueError):
             return []
 
-    def _parse_point(self, point: ET.Element, start_dt: datetime, namespace: Dict) -> Optional[Dict]:
+    def _parse_point(self, point: ET.Element, start_dt: datetime, interval_minutes: int, namespace: Dict) -> Optional[Dict]:
         """Parse a single price point from the XML response."""
         try:
             position = int(point.find("ns:position", namespace).text)
@@ -133,7 +188,8 @@ class EntsoeClient(ElectricityPriceProvider):
             price_kwh = price_mwh / 1000
             price_cents = price_kwh * 100 * self.VAT_RATE
 
-            timestamp = start_dt + timedelta(hours=position - 1)
+            # Calculate timestamp based on position and interval
+            timestamp = start_dt + timedelta(minutes=interval_minutes * (position - 1))
 
             return {
                 "timestamp": timestamp,

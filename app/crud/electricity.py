@@ -46,21 +46,55 @@ async def get_electricity_prices(
     existing_intervals = {price.timestamp for price in prices}
     missing_intervals = expected_intervals - existing_intervals
 
-    if missing_intervals:
+    # Filter out future intervals that providers won't have yet
+    # Electricity price data availability (based on Europe/Stockholm market time):
+    # - Before 14:00 Stockholm: Only current day data available
+    # - After 14:00 Stockholm: Current day + next day data available (until ~21:00 next day)
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from dateutil.tz import gettz as ZoneInfo
+
+    stockholm_tz = ZoneInfo("Europe/Stockholm")
+    current_stockholm = datetime.now(stockholm_tz)
+    current_stockholm_hour = current_stockholm.hour
+
+    if current_stockholm_hour >= 14:
+        # After 14:00 Stockholm: next day data available until 21:00 next day Stockholm
+        next_day_stockholm = current_stockholm.date() + timedelta(days=1)
+        max_available_stockholm = datetime.combine(
+            next_day_stockholm, datetime.min.time()
+        ).replace(tzinfo=stockholm_tz) + timedelta(hours=21)
+        max_available_time = max_available_stockholm.astimezone(timezone.utc)
+    else:
+        # Before 14:00 Stockholm: only current Stockholm day available
+        end_of_day_stockholm = current_stockholm.replace(
+            hour=23, minute=59, second=59, microsecond=999999
+        )
+        max_available_time = end_of_day_stockholm.astimezone(timezone.utc)
+
+    # Only fetch intervals that should be available from the provider
+    fetchable_missing_intervals = {
+        ts for ts in missing_intervals
+        if ts <= max_available_time
+    }
+
+    if fetchable_missing_intervals:
         try:
             provider_manager = get_provider_manager()
 
             import logging
             logger = logging.getLogger("app")
 
-            # Fetch the entire missing range in one request
+            # Fetch the entire fetchable missing range in one request
             # The provider manager handles chunking internally (30-day chunks)
-            min_ts = min(missing_intervals)
-            max_ts = max(missing_intervals)
+            min_ts = min(fetchable_missing_intervals)
+            max_ts = max(fetchable_missing_intervals)
 
             logger.info(
-                "Fetching %d missing intervals from %s to %s",
-                len(missing_intervals), min_ts, max_ts
+                "Fetching %d fetchable missing intervals from %s to %s (filtered out %d future intervals)",
+                len(fetchable_missing_intervals), min_ts, max_ts,
+                len(missing_intervals) - len(fetchable_missing_intervals)
             )
 
             # Fetch data from provider
@@ -74,6 +108,7 @@ async def get_electricity_prices(
 
             expanded_prices = []
             if is_hourly:
+                logger.info(f"Expanding {len(all_provider_prices)} hourly prices to 15-minute intervals")
                 for p in all_provider_prices:
                     base = p.timestamp.replace(minute=0, second=0, microsecond=0)
                     for offset in (0, 15, 30, 45):
@@ -82,13 +117,15 @@ async def get_electricity_prices(
                         expanded_price.timestamp = ts
                         expanded_price.price = p.price
                         expanded_prices.append(expanded_price)
+                logger.info(f"Expanded to {len(expanded_prices)} prices")
             else:
+                logger.info(f"Not expanding: {len(all_provider_prices)} prices with minutes {minutes_set}")
                 expanded_prices = all_provider_prices
 
-            # Filter to only include missing timestamps
+            # Filter to only include fetchable missing timestamps
             new_prices = [
                 price for price in expanded_prices
-                if price.timestamp in missing_intervals
+                if price.timestamp in fetchable_missing_intervals
             ]
 
             logger.info("Provider returned %d prices, %d are new", len(all_provider_prices), len(new_prices))
@@ -122,14 +159,8 @@ async def get_electricity_prices(
                 db.commit()
                 logger.info("Inserted %d new prices into database", total_inserted)
 
-            # Check if there are still missing intervals after successful fetch
-            # This happens when the provider successfully returns data, but some timestamps
-            # are genuinely missing from their database (e.g., ENTSO-E has incomplete data).
-            # We insert NULL placeholders ONLY when the provider succeeded but returned incomplete data.
-            # If the provider failed (network error, API down), the exception above will be raised
-            # and we won't reach this code - no NULL values will be inserted.
             fetched_timestamps = {p.timestamp for p in new_prices}
-            still_missing = missing_intervals - fetched_timestamps
+            still_missing = fetchable_missing_intervals - fetched_timestamps
 
             if still_missing:
                 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
