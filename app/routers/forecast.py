@@ -25,10 +25,10 @@ from app.forecasting import feedback, features, scheduler, store, training
 from app.forecasting import schemas
 from app.forecasting.models import DriverData, Prediction, SpotPriceRaw
 from app.logging_config import logger
-from app.providers.nordpool import NordpoolClient
+from app.providers.entsoe import EntsoeClient
 from app.routers.electricity import ensure_utc
 
-VAT_RATE = NordpoolClient.VAT_RATE
+VAT_RATE = EntsoeClient.VAT_RATE
 BIAS_COLUMNS = {"bias", "base_value", "expected_value", "const", "intercept", "_bias"}
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])

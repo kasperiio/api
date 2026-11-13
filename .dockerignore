@@ -1,12 +1,17 @@
-# Secrets come from the environment, data from the mounted volume
+# Secrets and persistent data are supplied at runtime.
 .env
+.env.*
+!.env.example
 data/
+*.db
+*.db.gz
 venv/
+.venv/
 .git/
 .github/
 .idea/
 .vscode/
 **/__pycache__/
+.pytest_cache/
 tests/
-*.db
-*.db.gz
+experiments/

@@ -1,5 +1,58 @@
 # Changelog
 
+## [3.0.5](https://github.com/kasperiio/api/compare/v3.0.4...v3.0.5) (2025-10-16)
+
+
+### Bug Fixes
+
+* take entsoe-e variables scoped blocks into account, restore prefetch filtering that was removed with refactor ([86fc382](https://github.com/kasperiio/api/commit/86fc382bb578fcc9f8240656685820b2459e7040))
+
+## [3.0.4](https://github.com/kasperiio/api/compare/v3.0.3...v3.0.4) (2025-10-14)
+
+
+### Bug Fixes
+
+* fix build again, hopefully ([93038d5](https://github.com/kasperiio/api/commit/93038d5fd64add2ab3ebcc3adb9a8b01c94133d5))
+
+## [3.0.3](https://github.com/kasperiio/api/compare/v3.0.2...v3.0.3) (2025-10-14)
+
+
+### Bug Fixes
+
+* fix build again, hopefully ([51c280c](https://github.com/kasperiio/api/commit/51c280c79d9b1d402919fd27649d4aef9737d9ec))
+
+## [3.0.2](https://github.com/kasperiio/api/compare/v3.0.1...v3.0.2) (2025-10-14)
+
+
+### Bug Fixes
+
+* release build with poetry ([9018646](https://github.com/kasperiio/api/commit/9018646e739cd9be0a252b3a59636941554a723c))
+
+## [3.0.1](https://github.com/kasperiio/api/compare/v3.0.0...v3.0.1) (2025-10-14)
+
+
+### Bug Fixes
+
+* release build with poetry ([80c3b31](https://github.com/kasperiio/api/commit/80c3b315a9a88d1db45af8341afa53302f1509fc))
+
+## [3.0.0](https://github.com/kasperiio/api/compare/v2.2.2...v3.0.0) (2025-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* Nordpool provider has been removed as it now requires authentication
+
+### Code Refactoring
+
+* remove Nordpool provider and simplify data fetching ([f014853](https://github.com/kasperiio/api/commit/f014853c4a57c5519c79f656ee63a158d161dff1))
+
+## [2.2.2](https://github.com/kasperiio/api/compare/v2.2.1...v2.2.2) (2025-09-02)
+
+
+### Bug Fixes
+
+* provider data availabilty filter based on europe/stockholm instead of utc ([c314411](https://github.com/kasperiio/api/commit/c3144110860b56988c307e4a798ab120b47feb5c))
+
 ## [2.2.1](https://github.com/kasperiio/api/compare/v2.2.0...v2.2.1) (2025-09-01)
 
 

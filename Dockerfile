@@ -1,18 +1,24 @@
 # Use the official Python image from the Docker Hub
-FROM python:3.12-slim
+FROM python:3.10-slim
 
-# LightGBM needs the OpenMP runtime
+# LightGBM needs the OpenMP runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container
-COPY requirements.txt .
+# Install Poetry
+RUN pip install --no-cache-dir poetry==2.2.1
 
-# Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy poetry configuration files
+COPY pyproject.toml poetry.lock ./
+
+# Configure Poetry to not create a virtual environment (we're already in a container)
+RUN poetry config virtualenvs.create false
+
+# Install dependencies only (we don't need to install the project as a package)
+RUN poetry install --only main --no-interaction --no-ansi --no-root
 
 # Copy the rest of the application code into the container
 COPY . .
