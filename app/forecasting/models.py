@@ -82,3 +82,38 @@ class ModelRecord(Base):
     is_active = Column(Boolean, nullable=False, default=False)
     metrics_json = Column(Text, nullable=True)
     features_json = Column(Text, nullable=True)
+
+
+class ArchivedWeather(Base):
+    """Previous-run weather values keyed by target hour and forecast age."""
+
+    __tablename__ = "archived_weather"
+    timestamp = Column(TZDateTime, primary_key=True)
+    series = Column(String(64), primary_key=True)
+    lead_days = Column(Integer, primary_key=True)
+    value = Column(Float, nullable=False)
+
+
+class OutageEvent(Base):
+    """One availability period of an ENTSO-E outage document revision.
+
+    Every revision is kept: features use, per document, the latest revision
+    published before the forecast issue time, which keeps them leakage-safe.
+    """
+
+    __tablename__ = "outage_events"
+
+    mrid = Column(String(64), primary_key=True)
+    revision = Column(Integer, primary_key=True)
+    start = Column(TZDateTime, primary_key=True)
+    end = Column(TZDateTime, nullable=False)
+    published_at = Column(TZDateTime, nullable=False, index=True)
+    kind = Column(String(16), nullable=False)           # generation | transmission
+    business_type = Column(String(16), nullable=False)  # planned | forced
+    status = Column(String(16), nullable=False)         # active | cancelled
+    resource = Column(String(128), nullable=False, default="")
+    border = Column(String(16), nullable=False, default="")
+    psr_type = Column(String(8), nullable=False, default="")
+    nominal_mw = Column(Float, nullable=True)
+    available_mw = Column(Float, nullable=True)
+    unavailable_mw = Column(Float, nullable=True)

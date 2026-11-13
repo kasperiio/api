@@ -17,6 +17,10 @@ This application provides API for different usecases (Electricity).
 A self-learning 7-day forecast of Finnish day-ahead prices (`/forecast`), with p10/p50/p90 bands.
 
 - **Drivers:** wind, consumption, solar and nuclear from Fingrid; load/wind forecasts, neighbouring zone prices (SE1, SE3, EE) and Nordic hydro reservoirs from ENTSO-E; weather forecasts from Open-Meteo.
+- **Additional history:** Open-Meteo Previous Runs supplies weather forecasts at their original lead times where available, replacing simulated forecast-error noise. ENTSO-E outage revisions are selected as of the forecast issue time. EEX's free EUA primary-auction reports provide a carbon-price proxy, available to the model from the following day and carried forward for at most a week. Historical data missing from these sources falls back to the existing inputs.
+- **Outage capacity:** transmission notices preserve reported available MW. These values are the minimum among active notices for a border, not total border transfer capacity. Unavailable MW is only calculated when nominal capacity is supplied.
+- **Outage history limitation:** the tested ENTSO-E backfill returned only the latest revision of each notice. Notices published after a historical issue time are excluded, which prevents leakage but leaves gaps in what can be reconstructed. Hourly ingestion retains revisions as they arrive going forward.
+- **Transfer capacity:** day-ahead estimated net transfer capacity into Finland is requested separately for EE, SE1 and SE3 and masked beyond D+1. Some borders/periods have no published NTC. As with other archived day-ahead drivers, historical values may include revisions; captured issue-time snapshots are preferred.
 - **Model:** LightGBM quantile regression. On first start the app backfills data from 2023 and replays history week by week to train the first model and measure its accuracy.
 - **Self-learning:** the app runs scheduled jobs in-process (Europe/Helsinki time):
 
@@ -41,7 +45,7 @@ On first start the app backfills history from 2023, which takes a while because 
 PYTHONPATH=. python scripts/backfill.py --start 2023-01-01
 ```
 
-To skip the API backfill on another machine, copy the history from one that already has it. Only the price and driver history is copied; the target merges it in without overwriting existing rows, then trains its own model on start:
+To skip the API backfill on another machine, copy the history from one that already has it. Price and driver history, archived weather and outage revisions are copied; the target merges them without overwriting existing rows, then trains its own model on start:
 ```sh
 # where the backfill ran
 PYTHONPATH=. python scripts/history_transfer.py export --out history.db
@@ -52,6 +56,44 @@ docker compose up -d
 Import before the app's first start with forecasting enabled; otherwise its startup job is already backfilling from the APIs. The app then only fetches the data newer than the export.
 
 Run the app with a single uvicorn worker, otherwise each worker runs the scheduled jobs.
+
+Compare the median model against spike/regime mixtures, or compare source additions on identical historical evaluation inputs, without activating any model:
+```sh
+python scripts/forecast_experiments.py --db data/electricity_prices.db --out experiments/models --experiment models
+python scripts/forecast_experiments.py --db data/electricity_prices.db --out experiments/sources --experiment sources
+```
+The source comparison evaluates every variant on real archived weather where present; its baseline is trained with simulated weather errors. Results are separate from the production replay's calibrated quantile metrics. Predictions and MAE summaries are written to the selected output directory. Gas prices are not yet integrated; Trading Hub Europe's public VTP index is a potential gas proxy, subject to a working official endpoint.
+
+`/forecast/drivers` returns p50 in EUR/MWh; SHAP contributions and the base value are in `asinh(price / 10)` space, identified by `contribution_unit`. Spike models expose `explanation_method=base_model_shap_plus_spike_adjustment`: feature contributions explain the base model and a separate `spike_adjustment` reconciles them to the final median. That adjustment is not a feature SHAP value.
+
+Experiments on 2023-01-01–2026-11-13 history (median only; these are not calibrated production-forecast metrics):
+
+| Archived-weather model experiment | Overall MAE, EUR/MWh | Last-year MAE | Spike-hour MAE (>100 EUR/MWh) |
+|---|---:|---:|---:|
+| Single model | 26.79 | 26.42 | 77.62 |
+| Spike mixture | 26.53 | 26.31 | 72.81 |
+| Baltic-coupling mixture | 26.83 | 26.72 | 76.67 |
+
+This initial median-only run used 191,611 evaluation rows, a 180-day warmup and 28-day retraining blocks. The outage backfill was still partial when its input frame was built.
+
+A separate source comparison after the outage backfill, on the same dates and retraining cadence, found no robust improvement from adding every source: the baseline trained on simulated weather errors scored 27.13 overall / 26.12 last-year MAE, versus 27.06 / 27.46 with archived weather, carbon and outages. That run used the completed outage history and a stricter radiation-run availability cutoff, so its absolute MAEs should not be compared directly with the earlier model experiment. No experimental model was activated. The existing served model configuration also beat larger models, Huber/L2 losses and recency decay; daily retraining now uses uniform weights, consistent with bootstrap training.
+
+The full spike model retains the base quantile bounds, expands them to contain its new median when necessary, and uses the existing rolling band calibration. A later replay on the completed history, with calibration fitted only from outcomes before each issue, scored 177,571 rows after a 90-day calibration warmup:
+
+| Calibrated replay | Overall MAE, EUR/MWh | Last-year MAE | Spike-hour MAE | p10–p90 coverage | Mean interval width, EUR/MWh |
+|---|---:|---:|---:|---:|---:|
+| Base quantile model | 26.34 | 27.30 | 78.75 | 79.2% | 82.45 |
+| Spike model | 25.93 | 26.71 | 72.47 | 79.5% | 82.39 |
+
+The spike model passed the predeclared median, recent-year, spike-hour and band-quality checks. Its weighted conditional medians are an empirical predictor, not the mathematical median of a mixture distribution. Weekly and drift retraining compare it with the base challenger on the same recent holdout, then compare the selected challenger with the active model. Promotion also checks finite ordered bands, coverage, width and interval score; an MAE improvement alone is insufficient. A spike fit with too few examples falls back to the base model.
+
+The latest scratch-database comparison (2026-10-16–2026-11-13 holdout) chose the base challenger: 29.07 EUR/MWh versus 29.45 for the spike variant. Neither replaced the active model. The incumbent had already trained on that holdout, so its 22.53 MAE is not an independent out-of-sample benchmark; promotion remains conservative until fresh outcomes accumulate.
+
+Reproduce the band validation or request a manual challenger comparison (the second command can activate a winning model):
+```sh
+python scripts/validate_spike.py --db data/electricity_prices.db --out experiments/spike-bands
+python scripts/retrain_forecast.py --db data/electricity_prices.db --spike
+```
 
 ## Installation
 

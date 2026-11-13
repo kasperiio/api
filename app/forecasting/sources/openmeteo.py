@@ -6,6 +6,13 @@ Two endpoints, same parameters and response shape:
   archived model forecasts from ~2022 onwards, queried with start_date/end_date.
 - Forecast API (``api.open-meteo.com/v1/forecast``): current forecast, up to 16
   days ahead (``forecast_days``) plus up to 92 days back (``past_days``).
+- Previous Runs API (``previous-runs-api.open-meteo.com/v1/forecast``): for each
+  hour T, ``<var>_previous_dayN`` is the value forecast for T by the model run
+  N*24 h earlier (N = 0..7; day0 = the freshest run). Data (best_match) starts
+  2024-01-19 for day1 temperature/radiation; all of day1..7 for temperature,
+  wind_speed_100m and shortwave_radiation are complete from 2024-03-13. Unknown
+  leads (day8+) return all-null columns, not an error. Values are also returned
+  for future hours, so the archive is clipped at "now".
 
 Multiple locations are requested in one call via comma-separated
 latitude/longitude; the response is then a JSON list (one object per location,
@@ -28,7 +35,7 @@ Produced series (hourly, UTC):
 
 import time
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import requests
@@ -55,6 +62,11 @@ WIND_POINTS: List[Tuple[str, float, float]] = [
 ]
 
 COLUMNS = ["timestamp", "series", "value"]
+PREVIOUS_RUNS_COLUMNS = ["timestamp", "series", "lead_days", "value"]
+
+TEMP_VAR = "temperature_2m"
+SOLAR_VAR = "shortwave_radiation"
+WIND_VAR = "wind_speed_100m"
 
 
 def _empty() -> pd.DataFrame:
@@ -63,6 +75,19 @@ def _empty() -> pd.DataFrame:
         "series": pd.Series([], dtype=object),
         "value": pd.Series([], dtype=float),
     })
+
+
+def _empty_previous_runs() -> pd.DataFrame:
+    return pd.DataFrame({
+        "timestamp": pd.Series([], dtype="datetime64[ns, UTC]"),
+        "series": pd.Series([], dtype=object),
+        "lead_days": pd.Series([], dtype=int),
+        "value": pd.Series([], dtype=float),
+    })
+
+
+def _previous_var(var: str, lead: int) -> str:
+    return f"{var}_previous_day{lead}"
 
 
 def _to_utc(dt: datetime) -> pd.Timestamp:
@@ -75,6 +100,11 @@ def _to_utc(dt: datetime) -> pd.Timestamp:
 class OpenMeteoClient:
     HISTORICAL_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
     FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+    PREVIOUS_RUNS_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
+    # Docs: "most models from January 2024"; first non-null best_match value is
+    # 2024-01-19 (day1), longer leads start Feb/Mar 2024 (nulls are dropped).
+    PREVIOUS_RUNS_START = pd.Timestamp("2024-01-01", tz="UTC")
+    PREVIOUS_RUNS_MAX_LEAD = 7
     HISTORICAL_START = pd.Timestamp("2022-01-01", tz="UTC")
     CHUNK_MONTHS = 3
     MAX_FORECAST_DAYS = 16
@@ -134,7 +164,100 @@ class OpenMeteoClient:
             logger.warning(f"Open-Meteo: forecast fetch failed: {e}")
             return _empty()
 
+    def fetch_previous_runs(
+        self,
+        start: datetime,
+        end: datetime,
+        lead_days: Sequence[int] = (1, 2, 3, 4, 5, 6, 7),
+    ) -> pd.DataFrame:
+        """Real archived forecasts as issued ``lead_days`` days before each hour, for [start, end).
+
+        Long format: timestamp (UTC hour), series (canonical names), lead_days (int),
+        value. Same points, weights and aggregation as ``fetch_historical_forecasts``.
+        Clipped to [PREVIOUS_RUNS_START, now); hours where a lead has no data are dropped.
+        """
+        leads: List[int] = []
+        for n in lead_days:
+            n = int(n)
+            if not 0 <= n <= self.PREVIOUS_RUNS_MAX_LEAD:
+                logger.warning(
+                    f"Open-Meteo: previous_day{n} not offered "
+                    f"(0..{self.PREVIOUS_RUNS_MAX_LEAD}), skipping lead"
+                )
+            elif n not in leads:
+                leads.append(n)
+        start_ts, end_ts = _to_utc(start).floor("h"), _to_utc(end)
+        if start_ts < self.PREVIOUS_RUNS_START:
+            logger.info("Open-Meteo: previous runs start 2024-01, clipping request")
+            start_ts = self.PREVIOUS_RUNS_START
+        end_ts = min(end_ts, pd.Timestamp.now(tz="UTC"))
+        if not leads or end_ts <= start_ts:
+            return _empty_previous_runs()
+
+        frames = []
+        seen = {n: False for n in leads}
+        chunk_start = start_ts
+        while chunk_start < end_ts:
+            chunk_end = min(chunk_start + pd.DateOffset(months=self.CHUNK_MONTHS), end_ts)
+            params = {
+                "start_date": chunk_start.strftime("%Y-%m-%d"),
+                # end_date is inclusive
+                "end_date": (chunk_end - pd.Timedelta(seconds=1)).strftime("%Y-%m-%d"),
+            }
+            try:
+                chunk = self._fetch_previous_chunk(params, leads, chunk_start, chunk_end)
+                frames.append(chunk)
+                for n in chunk["lead_days"].unique():
+                    seen[int(n)] = True
+            except Exception as e:
+                logger.warning(
+                    f"Open-Meteo: previous-runs chunk {params['start_date']}..{params['end_date']} "
+                    f"failed, skipping: {e}"
+                )
+            chunk_start = chunk_end
+
+        frames = [f for f in frames if not f.empty]
+        if not frames:
+            return _empty_previous_runs()
+        missing = [n for n, ok in seen.items() if not ok]
+        if missing:
+            logger.warning(f"Open-Meteo: no previous-runs data for lead days {missing}, skipped")
+        df = pd.concat(frames, ignore_index=True)[PREVIOUS_RUNS_COLUMNS]
+        df["lead_days"] = df["lead_days"].astype(int)
+        df = df.drop_duplicates(["timestamp", "series", "lead_days"], keep="last")
+        return df.sort_values(["lead_days", "series", "timestamp"]).reset_index(drop=True)
+
     # ------------------------------------------------------------------ internals
+
+    def _fetch_previous_chunk(
+        self, base_params: dict, leads: List[int], start: pd.Timestamp, end: pd.Timestamp
+    ) -> pd.DataFrame:
+        """One previous-runs window: city + wind-point requests, aggregated per lead."""
+        city_vars = [_previous_var(v, n) for n in leads for v in (TEMP_VAR, SOLAR_VAR)]
+        wind_vars = [_previous_var(WIND_VAR, n) for n in leads]
+        cities = self._fetch_points(
+            self.PREVIOUS_RUNS_URL, base_params, [(c[1], c[2]) for c in CITIES], city_vars
+        )
+        wind = self._fetch_points(
+            self.PREVIOUS_RUNS_URL, base_params, [(p[1], p[2]) for p in WIND_POINTS], wind_vars
+        )
+        frames = []
+        for n in leads:
+            out = self._aggregate(
+                cities, wind,
+                _previous_var(TEMP_VAR, n), _previous_var(SOLAR_VAR, n), _previous_var(WIND_VAR, n),
+            )
+            for name, s in out.items():
+                s = s[(s.index >= start) & (s.index < end)].dropna()
+                if s.empty:
+                    continue
+                frames.append(pd.DataFrame({
+                    "timestamp": s.index, "series": name, "lead_days": n,
+                    "value": s.values.astype(float),
+                }))
+        if not frames:
+            return _empty_previous_runs()
+        return pd.concat(frames, ignore_index=True)
 
     def _fetch_all(
         self, url: str, base_params: dict, start: pd.Timestamp, end: pd.Timestamp
@@ -147,19 +270,7 @@ class OpenMeteoClient:
         wind = self._fetch_points(
             url, base_params, [(p[1], p[2]) for p in WIND_POINTS], ["wind_speed_100m"],
         )
-        weights = pd.Series([c[3] for c in CITIES], dtype=float)
-
-        out: Dict[str, pd.Series] = {
-            S.TEMPERATURE_FORECAST_C: self._weighted_mean(
-                [f.get("temperature_2m") for f in cities], weights
-            ),
-            S.SOLAR_RADIATION_FORECAST_WM2: self._weighted_mean(
-                [f.get("shortwave_radiation") for f in cities], None
-            ),
-            S.WIND_SPEED_100M_FORECAST_MS: self._weighted_mean(
-                [f.get("wind_speed_100m") for f in wind], None
-            ),
-        }
+        out = self._aggregate(cities, wind, TEMP_VAR, SOLAR_VAR, WIND_VAR)
         frames = []
         for name, s in out.items():
             s = s[(s.index >= start) & (s.index < end)].dropna()
@@ -169,6 +280,29 @@ class OpenMeteoClient:
                 "timestamp": s.index, "series": name, "value": s.values.astype(float)
             }))
         return self._concat(frames)
+
+    @classmethod
+    def _aggregate(
+        cls,
+        cities: List[Dict[str, pd.Series]],
+        wind: List[Dict[str, pd.Series]],
+        temp_key: str,
+        solar_key: str,
+        wind_key: str,
+    ) -> Dict[str, pd.Series]:
+        """Per-location variables -> the three canonical aggregate series."""
+        weights = pd.Series([c[3] for c in CITIES], dtype=float)
+        return {
+            S.TEMPERATURE_FORECAST_C: cls._weighted_mean(
+                [f.get(temp_key) for f in cities], weights
+            ),
+            S.SOLAR_RADIATION_FORECAST_WM2: cls._weighted_mean(
+                [f.get(solar_key) for f in cities], None
+            ),
+            S.WIND_SPEED_100M_FORECAST_MS: cls._weighted_mean(
+                [f.get(wind_key) for f in wind], None
+            ),
+        }
 
     @staticmethod
     def _weighted_mean(columns: List[Optional[pd.Series]], weights: Optional[pd.Series]) -> pd.Series:
@@ -223,6 +357,14 @@ class OpenMeteoClient:
             resp = self.session.get(url, params=params, timeout=self.TIMEOUT)
             if (resp.status_code == 429 or resp.status_code >= 500) and attempt < self.MAX_RETRIES:
                 wait = self.backoff_s * (2 ** attempt)
+                if resp.status_code == 429:
+                    # Large multi-location archive queries consume the free
+                    # minute quota quickly; short retries only repeat the 429.
+                    try:
+                        retry_after = float(resp.headers.get("Retry-After", 60))
+                    except (ValueError, TypeError):
+                        retry_after = 60
+                    wait = max(wait, retry_after)
                 logger.info(f"Open-Meteo: HTTP {resp.status_code}, retrying in {wait:.0f}s")
                 self._sleep(wait)
                 continue

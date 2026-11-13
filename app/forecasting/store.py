@@ -16,9 +16,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.forecasting.models import (
+    ArchivedWeather,
     DriverData,
     ForecastSnapshot,
     ModelRecord,
+    OutageEvent,
     Prediction,
     SpotPriceRaw,
 )
@@ -78,6 +80,24 @@ def upsert_driver_data(db: Session, df: pd.DataFrame, source: str) -> int:
     return len(rows)
 
 
+def upsert_archived_weather(db: Session, df: pd.DataFrame) -> int:
+    rows = [{"timestamp": _utc(r.timestamp), "series": r.series,
+             "lead_days": int(r.lead_days), "value": float(r.value)}
+            for r in df.dropna(subset=["value"]).itertuples(index=False)]
+    _bulk_upsert(db, ArchivedWeather, rows, ["timestamp", "series", "lead_days"])
+    return len(rows)
+
+
+def load_archived_weather(db: Session, start: datetime, end: datetime) -> pd.DataFrame:
+    rows = db.execute(select(ArchivedWeather).where(
+        ArchivedWeather.timestamp >= _utc(start), ArchivedWeather.timestamp < _utc(end)
+    )).scalars().all()
+    df = pd.DataFrame([(r.timestamp, r.series, r.lead_days, r.value) for r in rows],
+                      columns=["timestamp", "series", "lead_days", "value"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    return df
+
+
 def insert_snapshot(db: Session, df: pd.DataFrame, issued_at: datetime) -> int:
     """Store a driver frame as a forecast snapshot captured at ``issued_at``."""
     issued = _utc(issued_at)
@@ -89,6 +109,45 @@ def insert_snapshot(db: Session, df: pd.DataFrame, issued_at: datetime) -> int:
     } for row in df.dropna(subset=["value"]).itertuples(index=False)]
     _bulk_upsert(db, ForecastSnapshot, rows, ["issued_at", "timestamp", "series"])
     return len(rows)
+
+
+OUTAGE_COLUMNS = [
+    "mrid", "revision", "published_at", "kind", "business_type", "status", "resource",
+    "border", "psr_type", "nominal_mw", "start", "end", "available_mw", "unavailable_mw",
+]
+
+
+def upsert_outages(db: Session, df: pd.DataFrame) -> int:
+    """Insert or update outage event rows (see OutageEvent)."""
+    def num(v):
+        return None if v is None or pd.isna(v) else float(v)
+
+    rows = [{
+        "mrid": str(r.mrid), "revision": int(r.revision), "start": _utc(r.start), "end": _utc(r.end),
+        "published_at": _utc(r.published_at), "kind": r.kind, "business_type": r.business_type,
+        "status": r.status, "resource": str(r.resource or ""), "border": str(r.border or ""),
+        "psr_type": str(r.psr_type or ""), "nominal_mw": num(r.nominal_mw),
+        "available_mw": num(r.available_mw), "unavailable_mw": num(r.unavailable_mw),
+    } for r in df.itertuples(index=False)]
+    _bulk_upsert(db, OutageEvent, rows, ["mrid", "revision", "start"])
+    return len(rows)
+
+
+def load_outages(db: Session, start: datetime, end: datetime,
+                 published_before: Optional[datetime] = None) -> pd.DataFrame:
+    """Outage rows overlapping [start, end), optionally only those published before a time."""
+    # Fetch all revisions of any overlapping document. A later revision may
+    # move the outage outside this window or cancel it altogether.
+    documents = select(OutageEvent.mrid).where(
+        OutageEvent.end > _utc(start), OutageEvent.start < _utc(end))
+    conds = [OutageEvent.mrid.in_(documents)]
+    if published_before is not None:
+        conds.append(OutageEvent.published_at <= _utc(published_before))
+    rows = db.execute(select(OutageEvent).where(and_(*conds))).scalars().all()
+    df = pd.DataFrame([[getattr(r, c) for c in OUTAGE_COLUMNS] for r in rows], columns=OUTAGE_COLUMNS)
+    for c in ("published_at", "start", "end"):
+        df[c] = pd.to_datetime(df[c], utc=True)
+    return df
 
 
 def load_spot_prices(

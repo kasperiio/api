@@ -20,6 +20,10 @@ Information sets
   D+1), so those series are masked to NaN beyond ``SERIES_MAX_HORIZON`` in both
   training and prediction; Open-Meteo weather carries the long horizons.
 * Open-Meteo radiation is period-end stamped and shifted 1 h back on load.
+* Archived weather overrides simulated values only when its model run is at
+  least six hours older than the issue; captured snapshots take precedence.
+* Outages use the latest document revision published by issue time. Carbon
+  auction prices enter from the next UTC day and expire after seven days.
 
 Training issue times are one per day at 12:00 Europe/Helsinki. Only target
 hours whose price is not yet known at issue time (lead_hours >= 0) and within
@@ -38,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from app.forecasting import series as S
 from app.forecasting import store
+from app.forecasting.outages import OUTAGE_FEATURES, outage_features
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +69,10 @@ FORECAST_SERIES = [
     S.LOAD_FORECAST_MW,
     S.WIND_FORECAST_ENTSOE_MW,
     S.SOLAR_FORECAST_ENTSOE_MW,
-]
+] + list(S.TRANSFER_CAPACITY_SERIES)
 RESERVOIR_SERIES = [S.HYDRO_RESERVOIR_NO_MWH, S.HYDRO_RESERVOIR_SE_MWH]
 # Stepwise series: last known value at the issue hour is used for every target hour.
-ISSUE_SERIES = [S.WIND_CAPACITY_MW]
+ISSUE_SERIES = [S.WIND_CAPACITY_MW, S.EUA_AUCTION_EUR_T]
 ACTUAL_SERIES = [S.NUCLEAR_ACTUAL_MW, S.NET_IMPORT_ACTUAL_MW, S.HYDRO_ACTUAL_MW]
 FFILL_SERIES = ISSUE_SERIES + RESERVOIR_SERIES
 ALL_SERIES = FORECAST_SERIES + ISSUE_SERIES + RESERVOIR_SERIES + ACTUAL_SERIES
@@ -87,6 +92,7 @@ SERIES_MAX_HORIZON = {
     S.WIND_FORECAST_ENTSOE_MW: D_PLUS_1,
     S.SOLAR_FORECAST_ENTSOE_MW: D_PLUS_1,
 }
+SERIES_MAX_HORIZON.update({name: D_PLUS_1 for name in S.TRANSFER_CAPACITY_SERIES})
 # Open-Meteo radiation at hour H is the mean over (H-1, H]; shift to period start.
 PERIOD_END_SERIES = [S.SOLAR_RADIATION_FORECAST_WM2]
 
@@ -133,7 +139,7 @@ ACTUAL_FEATURES = [
 FEATURE_COLUMNS: List[str] = (
     CALENDAR_FEATURES + FORECAST_SERIES + ISSUE_SERIES + RESERVOIR_SERIES
     + RESERVOIR_CHANGE_FEATURES + DERIVED_FEATURES
-    + PRICE_FEATURES + ACTUAL_FEATURES
+    + PRICE_FEATURES + ACTUAL_FEATURES + OUTAGE_FEATURES
 )
 
 
@@ -269,7 +275,11 @@ def _load_drivers(db: Session, start: pd.Timestamp, end: pd.Timestamp) -> pd.Dat
     d.index = pd.DatetimeIndex(d.index)
     d = _shift_period_end(d.reindex(columns=ALL_SERIES))
     d = d.reindex(_hour_range(start, end)).astype(float)
+    carbon = d[S.EUA_AUCTION_EUR_T].copy()
     d[FFILL_SERIES] = d[FFILL_SERIES].ffill()
+    # Carbon auctions pause over holidays and summers. Do not silently carry
+    # a stale market price indefinitely across an archive gap.
+    d[S.EUA_AUCTION_EUR_T] = carbon.ffill(limit=7 * 24)
     return d
 
 
@@ -332,6 +342,8 @@ def _assemble(
     seed: int,
     snapshots: Optional[Dict[pd.Timestamp, pd.DataFrame]] = None,
     known_until: Optional[pd.DatetimeIndex] = None,
+    archived_weather: Optional[pd.DataFrame] = None,
+    outages: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Full grid (each issue x horizons 1..168) feature frame.
 
@@ -379,6 +391,23 @@ def _assemble(
                 fvals[:, j] = fvals[:, j] * np.exp(err - 0.5 * err ** 2)
             else:
                 fvals[:, j] = fvals[:, j] + err
+    # Choose an archive age whose model run predates the issue by at least six
+    # hours. Previous Runs has no exact publication timestamps; using a younger
+    # run would let future weather information into historical evaluation.
+    if archived_weather is not None and not archived_weather.empty:
+        archive = archived_weather.copy()
+        archive["timestamp"] = archive["timestamp"] - archive["series"].isin(
+            PERIOD_END_SERIES).astype(int) * pd.Timedelta(hours=1)
+        for j, name in enumerate(FORECAST_SERIES):
+            sub = archive[archive["series"] == name]
+            if sub.empty:
+                continue
+            values = sub.set_index(["timestamp", "lead_days"])["value"]
+            ages = np.ceil((h_arr + 6 + int(name in PERIOD_END_SERIES)) / 24).astype(int)
+            keys = pd.MultiIndex.from_arrays([target, ages])
+            v = values.reindex(keys).to_numpy()
+            m = ~np.isnan(v)
+            fvals[m, j] = v[m]
     if snapshots:
         for i, snap in snapshots.items():
             if snap is None or snap.empty:
@@ -402,6 +431,7 @@ def _assemble(
             fvals[h_arr > lim, j] = np.nan
     for j, name in enumerate(FORECAST_SERIES):
         cols[name] = fvals[:, j]
+    cols.update(outage_features(outages, issues, target, issue_idx))
 
     # Stepwise series (capacity): last known value at the issue hour
     for name in ISSUE_SERIES:
@@ -539,7 +569,10 @@ def build_full_frame(
     prices = _load_prices(db, lo, hi)
     drivers = _load_drivers(db, lo, hi)
     snaps = _load_snapshots(db, issues)
-    X = _assemble(prices, drivers, issues, noise=noise, seed=seed, snapshots=snaps)
+    archive = store.load_archived_weather(db, lo, hi)
+    events = store.load_outages(db, lo, hi, published_before=issues.max())
+    X = _assemble(prices, drivers, issues, noise=noise, seed=seed, snapshots=snaps,
+                  archived_weather=archive, outages=events)
     y = prices["FI"].reindex(pd.DatetimeIndex(X["_target_ts"])).to_numpy()
     keep = (
         (X["lead_hours"].to_numpy() >= 0)
@@ -618,7 +651,8 @@ def build_prediction_frame(
     snap = store.load_snapshot_asof(db, issued, issued.floor("h"), hi)
     snaps = {0: snap} if not snap.empty else None
     X = _assemble(prices, drivers, issues, noise=False, seed=NOISE_SEED, snapshots=snaps,
-                  known_until=pd.DatetimeIndex([known]))
+                  known_until=pd.DatetimeIndex([known]),
+                  outages=store.load_outages(db, issued, hi, published_before=issued))
     n = min(int(horizon_days) * 24, MAX_HORIZON_HOURS)
     X = X.iloc[:n]
     out = X[FEATURE_COLUMNS].copy()

@@ -236,6 +236,26 @@ def test_get_sources_skips_unavailable_and_broken(monkeypatch):
     assert list(ingest.get_sources()) == ["entsoe"]
 
 
+def test_additional_sources_preserve_archived_lead_and_isolate_failure(db):
+    class Archived:
+        def fetch_previous_runs(self, start, end):
+            return pd.DataFrame({"timestamp": [start], "series": [S.TEMPERATURE_FORECAST_C],
+                                 "lead_days": [3], "value": [-7.0]})
+
+    class BrokenOutages:
+        def fetch_outages(self, start, end):
+            raise RuntimeError("outage service down")
+
+    start, end = utc(2025, 1, 1), utc(2025, 1, 2)
+    result = ingest.refresh_additional(db, start, end,
+                                     sources={"openmeteo": Archived(), "entsoe": BrokenOutages()})
+    frame = store.load_archived_weather(db, start, end)
+    assert frame.iloc[0].lead_days == 3
+    assert frame.iloc[0].value == -7.0
+    assert result["counts"]["fetch_previous_runs"] == 1
+    assert result["failures"][0]["job"] == "fetch_outages"
+
+
 def test_backfill_merges_missing_months_into_large_windows(db):
     sources = {"entsoe": FakeEntsoe(), "fingrid": FakeFingrid(), "openmeteo": FakeOpenMeteo()}
     ingest.backfill(db, utc(2023, 3, 1), utc(2023, 4, 1), sources=sources)  # March stored

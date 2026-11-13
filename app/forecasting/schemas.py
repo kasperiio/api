@@ -69,7 +69,7 @@ class AccuracyResponse(BaseModel):
 class DriverContribution(BaseModel):
     feature: str
     value: Optional[float] = Field(None, description="Feature value at the target hour")
-    contribution: float = Field(..., description="Contribution to p50, EUR/MWh")
+    contribution: float = Field(..., description="Base-model SHAP or named model adjustment in asinh(price / 10) space")
 
 
 class DriversResponse(BaseModel):
@@ -77,6 +77,8 @@ class DriversResponse(BaseModel):
     issued_at: datetime
     model_version: str
     unit: str = "eur_mwh"
+    contribution_unit: str = "asinh_eur_mwh_div_10"
+    explanation_method: str = "base_model_shap"
     base_value: Optional[float] = None
     p50: Optional[float] = Field(None, description="Raw model p50 for the hour, EUR/MWh")
     contributions: List[DriverContribution]

@@ -36,6 +36,23 @@ def test_spot_prices_upsert_and_load(db):
     assert str(loaded.index.tz) == "UTC"
 
 
+def test_outage_moved_outside_query_window_supersedes_old_revision(db):
+    from test_outages import event, ts
+    from app.forecasting.outages import outage_features
+    import numpy as np
+
+    store.upsert_outages(db, pd.DataFrame([
+        event("moved", 1, -10, 5, 10, 1600),
+        event("moved", 2, -5, 100, 110, 1600),
+    ]))
+    events = store.load_outages(db, ts(0), ts(24), published_before=ts(0))
+    assert set(events.revision) == {1, 2}
+    targets = pd.date_range(ts(1), ts(24), freq="h")
+    values = outage_features(events, pd.DatetimeIndex([ts(0)]), targets,
+                             np.zeros(len(targets), dtype=int))
+    assert values["nuclear_unavailable_mw"].max() == 0
+
+
 def test_spot_prices_aggregate_quarters_to_hourly_mean(db):
     quarters = pd.date_range("2025-01-01", periods=4, freq="15min", tz="UTC")
     store.upsert_spot_prices(db, pd.DataFrame({
@@ -100,3 +117,19 @@ def test_driver_upsert_overwrites_value(db):
     store.upsert_driver_data(db, frame, "a")
     store.upsert_driver_data(db, frame.assign(value=3.0), "b")
     assert set(store.load_drivers(db, HOURS[0], END)["wind_forecast_mw"]) == {3.0}
+
+
+def test_outages_roundtrip_and_published_filter(db):
+    frame = pd.DataFrame([
+        dict(mrid="m1", revision=1, published_at=HOURS[0], kind="generation", business_type="planned",
+             status="active", resource="OL3", border="", psr_type="B14", nominal_mw=1600.0,
+             start=HOURS[1], end=HOURS[3], available_mw=0.0, unavailable_mw=1600.0),
+        dict(mrid="m1", revision=2, published_at=HOURS[2], kind="generation", business_type="planned",
+             status="cancelled", resource="OL3", border="", psr_type="B14", nominal_mw=1600.0,
+             start=HOURS[1], end=HOURS[3], available_mw=0.0, unavailable_mw=1600.0),
+    ])
+    assert store.upsert_outages(db, frame) == 2
+    assert len(store.load_outages(db, HOURS[0], END)) == 2
+    known = store.load_outages(db, HOURS[0], END, published_before=HOURS[1])
+    assert list(known["revision"]) == [1]
+    assert str(known["start"].dt.tz) == "UTC"

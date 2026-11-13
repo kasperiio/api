@@ -47,10 +47,16 @@ def _build_openmeteo():
     return OpenMeteoClient()
 
 
+def _build_commodities():
+    from app.forecasting.sources.commodities import CommoditiesClient
+    return CommoditiesClient()
+
+
 _BUILDERS: Dict[str, Callable[[], object]] = {
     "entsoe": _build_entsoe,
     "fingrid": _build_fingrid,
     "openmeteo": _build_openmeteo,
+    "commodities": _build_commodities,
 }
 
 
@@ -291,6 +297,7 @@ def backfill(db: Session, start: datetime, end: datetime, sources: Optional[Sour
     for t in threads:
         t.join()
     logger.info("Backfill done: counts=%s failures=%d", result["counts"], len(result["failures"]))
+    result["additional"] = refresh_additional(db, start_ts, end_ts, sources=srcs)
     return result
 
 
@@ -337,6 +344,44 @@ def refresh_recent(
                     "error": f"{type(exc).__name__}: {exc}",
                 })
     logger.info("Refresh recent done: counts=%s failures=%d", result["counts"], len(result["failures"]))
+    result["additional"] = refresh_additional(db, start, end, sources=srcs)
+    return result
+
+
+def refresh_additional(db: Session, start: datetime, end: datetime,
+                       sources: Optional[Sources] = None) -> dict:
+    """Persist forecast-age archives and event revisions without flattening them.
+
+    These sparse sources have no hourly coverage test: re-fetching a window is
+    intentional, since outage revisions and archive gaps can arrive later.
+    """
+    srcs = _resolve(sources)
+    result = {"counts": {}, "failures": []}
+    for name, method, save in (
+        ("openmeteo", "fetch_previous_runs", store.upsert_archived_weather),
+        ("entsoe", "fetch_outages", store.upsert_outages),
+        ("entsoe", "fetch_transfer_capacities", lambda db, frame: store.upsert_driver_data(db, frame, "entsoe")),
+        ("commodities", "fetch_drivers", lambda db, frame: store.upsert_driver_data(db, frame, "eex")),
+    ):
+        fetch = getattr(srcs.get(name), method, None)
+        if fetch is None:
+            continue
+        lo, hi = _to_utc(start), _to_utc(end)
+        result["counts"][method] = 0
+        while lo < hi:
+            # Commit each archive window independently so a later HTTP failure
+            # cannot discard hours of successful historical source work.
+            nxt = min(lo + pd.DateOffset(months=3), hi) if name != "commodities" else hi
+            try:
+                frame = fetch(lo.to_pydatetime(), nxt.to_pydatetime())
+                count = save(db, frame) if frame is not None and not frame.empty else 0
+                result["counts"][method] += count
+            except Exception as exc:
+                db.rollback()
+                logger.error("Additional ingest %s %s..%s failed: %s", method, lo, nxt, exc)
+                result["failures"].append({"job": method, "start": lo.isoformat(),
+                                           "end": nxt.isoformat(), "error": f"{type(exc).__name__}: {exc}"})
+            lo = nxt
     return result
 
 
@@ -355,6 +400,23 @@ def capture_snapshot(
 
     frames = []
     for name, client in srcs.items():
+        capacity_fetch = getattr(client, "fetch_transfer_capacities", None)
+        if capacity_fetch is not None:
+            try:
+                capacity = capacity_fetch(issued.to_pydatetime(), end.to_pydatetime())
+                if capacity is not None and not capacity.empty:
+                    frames.append(capacity)
+            except Exception as exc:
+                logger.error("Snapshot: %s transfer capacity refresh failed: %s", name, exc)
+        outage_fetch = getattr(client, "fetch_outages", None)
+        if outage_fetch is not None:
+            try:
+                events = outage_fetch(issued.to_pydatetime(), end.to_pydatetime())
+                if events is not None and not events.empty:
+                    store.upsert_outages(db, events)
+            except Exception as exc:
+                db.rollback()
+                logger.error("Snapshot: %s outage refresh failed: %s", name, exc)
         fetch = getattr(client, "fetch_forecasts", None)
         if fetch is None:
             continue

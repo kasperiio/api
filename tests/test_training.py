@@ -153,6 +153,86 @@ def test_equal_challenger_is_not_activated(db, tmp_path):
     assert training.retrain(db, "weekly")["activated"] is False
 
 
+def test_better_point_forecast_with_worse_bands_is_not_promoted(db, tmp_path, monkeypatch):
+    add_champion(db, tmp_path, offset=5.0)
+    FakeModel.next_offset = 2.0
+    original = FakeModel.predict
+
+    def bad_bands(self, X):
+        predictions = original(self, X)
+        if self.offset == 2.0:
+            predictions["p10"] = predictions["p50"] - 100
+            predictions["p90"] = predictions["p50"] + 100
+        return predictions
+
+    monkeypatch.setattr(FakeModel, "predict", bad_bands)
+    result = training.retrain(db, "weekly")
+    assert result["challenger_eval_mae"] < result["champion_eval_mae"]
+    assert not result["activated"]
+    assert not result["band_checks"]["interval_score"]
+    assert store.get_active_model(db).version == "champ"
+
+
+def test_nonfinite_prediction_cannot_be_the_first_model(db, monkeypatch):
+    original = FakeModel.predict
+
+    def invalid(self, X):
+        predictions = original(self, X)
+        predictions.iloc[0, 0] = np.nan
+        return predictions
+
+    monkeypatch.setattr(FakeModel, "predict", invalid)
+    result = training.retrain(db, "test")
+    assert not result["activated"]
+    assert not result["band_checks"]["finite_ordered"]
+    assert store.get_active_model(db) is None
+
+
+@pytest.mark.parametrize("experts_fitted", [True, False])
+def test_optional_spike_challenger_preserves_validated_family_during_refit(db, monkeypatch, experts_fitted):
+    options = []
+
+    class FakeSpike(FakeModel):
+        def __init__(self, offset=None, params=None):
+            super().__init__(offset)
+            enabled = bool((params or {}).get("spike_mixture"))
+            options.append(enabled)
+            self.spike_boosters = {"classifier": object()} if enabled and experts_fitted else {}
+
+        def predict(self, X, use_spike=True):
+            predictions = super().predict(X)
+            return predictions if use_spike else predictions + 2.0
+
+    monkeypatch.setattr(training, "PriceModel", FakeSpike)
+    result = training.retrain(db, "spike-test", spike_mixture=True)
+    assert result["activated"]
+    assert options == [True, experts_fitted]
+    assert result["model_kind"] == ("spike_mixture" if experts_fitted else "quantile")
+
+
+def test_worse_spike_experts_fall_back_to_the_base_challenger(db, monkeypatch):
+    class FakeSpike(FakeModel):
+        def __init__(self, offset=None, params=None):
+            super().__init__(offset)
+            self.enabled = bool((params or {}).get("spike_mixture"))
+            self.spike_boosters = {"classifier": object()} if self.enabled else {}
+
+        def fit(self, X, y, sample_weight=None):
+            super().fit(X, y, sample_weight)
+            self.offset = 4.0 if self.enabled else 1.0
+            return self
+
+        def predict(self, X, use_spike=True):
+            predictions = super().predict(X)
+            return predictions if use_spike else predictions - 3.0
+
+    monkeypatch.setattr(training, "PriceModel", FakeSpike)
+    result = training.retrain(db, "spike-test", spike_mixture=True)
+    assert result["activated"] and result["model_kind"] == "quantile"
+    assert not result["spike_selection"]["selected"]
+    assert result["holdout_mae"] == pytest.approx(1.0)
+
+
 def test_champion_trained_on_holdout_uses_full_holdout(db, tmp_path):
     add_champion(db, tmp_path, offset=1.0, train_end=LAST_PRICE)
     FakeModel.next_offset = 4.0

@@ -1,6 +1,6 @@
 """Move backfilled forecasting history between databases without the APIs.
 
-Copies only the raw history tables (spot_prices_raw, driver_data). Models and
+Copies the raw history tables, archived weather and outage revisions. Models and
 predictions are not copied: the app retrains them on start (the walk-forward
 bootstrap takes minutes once the history is present).
 
@@ -27,7 +27,7 @@ import app.models  # noqa: E402,F401
 import app.forecasting.models  # noqa: E402,F401
 from app.database import Base  # noqa: E402
 
-TABLES = ("spot_prices_raw", "driver_data")
+TABLES = ("spot_prices_raw", "driver_data", "archived_weather", "outage_events")
 DEFAULT_DB = "data/electricity_prices.db"
 
 
@@ -45,6 +45,10 @@ def _copy(target: str, source: str, mode: str) -> dict:
         counts = {}
         with conn:
             for table in TABLES:
+                if not conn.execute("SELECT 1 FROM src.sqlite_master WHERE type='table' AND name=?",
+                                    (table,)).fetchone():
+                    counts[table] = 0  # accept exports made before these sources existed
+                    continue
                 cols = [row[1] for row in conn.execute(f"PRAGMA main.table_info({table})")]
                 col_list = ", ".join(cols)
                 before = conn.execute(f"SELECT COUNT(*) FROM main.{table}").fetchone()[0]

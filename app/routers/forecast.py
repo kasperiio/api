@@ -162,7 +162,7 @@ def get_drivers(
     timezone_str: str = Query("UTC", description="Timezone for naive input and the response"),
     db: Session = Depends(get_db),
 ):
-    """Top-10 feature contributions (SHAP, EUR/MWh) to the active model's p50 for one hour."""
+    """Top-10 base-model SHAP contributions and model adjustments in asinh space; p50 is EUR/MWh."""
     tz = _tz(timezone_str)
     target = pd.Timestamp(ensure_utc(timestamp, timezone_str)).floor("h")
     record, model = training.load_active_model(db)
@@ -199,6 +199,7 @@ def get_drivers(
     return schemas.DriversResponse(
         timestamp=target.to_pydatetime().astimezone(tz), issued_at=issued_at.astimezone(tz),
         model_version=record.version, base_value=base_value, p50=p50, contributions=items,
+        explanation_method=getattr(model, "explanation_method", "base_model_shap"),
     )
 
 

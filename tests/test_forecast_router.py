@@ -182,6 +182,8 @@ def test_drivers_endpoint(setup):
     body = r.json()
     assert body["timestamp"] == "2026-11-13T05:00:00+02:00"
     assert body["base_value"] == 60.0 and body["p50"] == 50.0
+    assert body["unit"] == "eur_mwh"
+    assert body["contribution_unit"] == "asinh_eur_mwh_div_10"
     feats = [c["feature"] for c in body["contributions"]]
     assert len(feats) == 10 and feats[0] == "wind" and "bias" not in feats
     assert body["contributions"][0]["value"] == 30.0

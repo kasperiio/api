@@ -60,3 +60,12 @@ def test_export_then_import_merges_without_overwriting(tmp_path):
     with sqlite3.connect(target) as conn:
         kept = conn.execute("SELECT price_eur_mwh FROM spot_prices_raw ORDER BY timestamp LIMIT 1").fetchone()[0]
     assert kept == 42.0  # existing row not overwritten
+
+
+def test_import_accepts_old_export_without_new_source_tables(tmp_path):
+    source, target = tmp_path / "old.db", tmp_path / "new.db"
+    _session(source).close()
+    with sqlite3.connect(source) as conn:
+        conn.execute("DROP TABLE archived_weather")
+        conn.execute("DROP TABLE outage_events")
+    assert "'archived_weather': 0" in _run("import", str(source), "--db", str(target))

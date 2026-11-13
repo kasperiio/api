@@ -82,6 +82,21 @@ def _mae(y: pd.Series, p50: pd.Series) -> Optional[float]:
     return float(np.abs(err).mean()) if err.size else None
 
 
+def _band_quality(y: pd.Series, predictions: pd.DataFrame) -> dict:
+    """Raw 80% interval quality on the same rows as the point-error comparison."""
+    actual = np.asarray(y, dtype=float)
+    values = predictions[["p10", "p50", "p90"]].to_numpy(dtype=float)
+    valid = bool(len(values) and np.isfinite(actual).all() and np.isfinite(values).all()
+                 and (values[:, 0] <= values[:, 1]).all() and (values[:, 1] <= values[:, 2]).all())
+    if not valid:
+        return {"valid": False, "coverage": None, "mean_width": None, "interval_score": None}
+    low, high = values[:, 0], values[:, 2]
+    width = high - low
+    score = width + 10 * np.maximum(low - actual, 0) + 10 * np.maximum(actual - high, 0)
+    return {"valid": True, "coverage": float(((actual >= low) & (actual <= high)).mean()),
+            "mean_width": float(width.mean()), "interval_score": float(score.mean())}
+
+
 def _mae_by_horizon_day(y: pd.Series, p50: pd.Series, horizon_hours: pd.Series) -> dict:
     days = np.clip(np.ceil(np.asarray(horizon_hours, dtype=float) / 24.0), 1, 7).astype(int)
     err = np.abs(np.asarray(y, dtype=float) - np.asarray(p50, dtype=float))
@@ -128,17 +143,19 @@ def clear_model_cache() -> None:
 
 # --------------------------------------------------------------------------- retrain
 
-def retrain(db: Session, reason: str, now: Optional[datetime] = None) -> dict:
+def retrain(db: Session, reason: str, now: Optional[datetime] = None,
+            spike_mixture: bool = False) -> dict:
     """Train a challenger and promote it if it beats the active champion.
 
     1. Fit the challenger on [TRAIN_START, holdout_start) where holdout is the
-       last HOLDOUT_DAYS before the latest known price, with recency weights.
+       last HOLDOUT_DAYS before the latest known price, with equal row weights.
     2. Score challenger and champion on the holdout. The champion may have been
        trained on part of the holdout, so the comparison uses only target hours
        after the champion's train_end when at least MIN_FAIR_EVAL_DAYS of those
        exist; otherwise the whole holdout (biased in the champion's favour, i.e.
        conservative).
-    3. If the challenger wins (strictly lower MAE) or there is no usable champion,
+    3. If the challenger wins (strictly lower MAE without materially worsening
+       interval quality) or there is no usable champion,
        refit it on all data and register+activate it. A losing challenger is
        registered inactive for the record.
 
@@ -148,12 +165,13 @@ def retrain(db: Session, reason: str, now: Optional[datetime] = None) -> dict:
         logger.warning("Retrain (%s) skipped: another training run is in progress", reason)
         return {"status": "skipped", "reason": reason, "detail": "training already running"}
     try:
-        return _retrain_locked(db, reason, now)
+        return _retrain_locked(db, reason, now, spike_mixture=spike_mixture)
     finally:
         _train_lock.release()
 
 
-def _retrain_locked(db: Session, reason: str, now: Optional[datetime]) -> dict:
+def _retrain_locked(db: Session, reason: str, now: Optional[datetime],
+                    spike_mixture: bool = False) -> dict:
     now = now or _utcnow()
     last = last_price_time(db)
     if last is None:
@@ -167,19 +185,44 @@ def _retrain_locked(db: Session, reason: str, now: Optional[datetime]) -> dict:
     if len(X_tr) == 0 or len(X_ho) == 0:
         return {"status": "no_data", "reason": reason, "train_rows": len(X_tr), "holdout_rows": len(X_ho)}
 
-    challenger = PriceModel().fit(X_tr, y_tr, sample_weight=recency_weights(X_tr, holdout_start))
+    # Full-history replay favoured uniform weights over 180/365-day decay.
+    # Keep this consistent with bootstrap training; promotion still requires
+    # beating the active model on the recent chronological holdout.
+    challenger = PriceModel(params={"spike_mixture": True}) if spike_mixture else PriceModel()
+    challenger.fit(X_tr, y_tr, sample_weight=pd.Series(1.0, index=X_tr.index))
     ch_pred = challenger.predict(X_ho)
     challenger_mae = _mae(y_ho, ch_pred["p50"])
+    spike_selection = None
+    if getattr(challenger, "spike_boosters", {}):
+        base_pred = challenger.predict(X_ho, use_spike=False)
+        base_mae = _mae(y_ho, base_pred["p50"])
+        base_bands, spike_bands = _band_quality(y_ho, base_pred), _band_quality(y_ho, ch_pred)
+        select_spike = (base_bands["valid"] and spike_bands["valid"]
+                        and challenger_mae is not None and base_mae is not None
+                        and challenger_mae < base_mae
+                        and spike_bands["coverage"] >= base_bands["coverage"] - 0.01
+                        and spike_bands["interval_score"] <= base_bands["interval_score"] * 1.02
+                        and spike_bands["mean_width"] <= base_bands["mean_width"] * 1.10)
+        spike_selection = {"selected": bool(select_spike), "baseline_mae": base_mae,
+                           "spike_mae": challenger_mae, "baseline_bands": base_bands,
+                           "spike_bands": spike_bands}
+        if not select_spike:
+            challenger.spike_boosters = {}
+            challenger.spike_mixture = False
+            if hasattr(challenger, "meta"):
+                challenger.meta["spike_status"] = "not_selected_on_holdout"
+            ch_pred, challenger_mae = base_pred, base_mae
 
     champion = store.get_active_model(db)
     champion_mae = None
     eval_scope = "full_holdout"
     challenger_cmp = challenger_mae
+    mask = np.ones(len(X_ho), dtype=bool)
+    champion_bands = None
     if champion is not None:
         try:
             _, champ_model = load_active_model(db)
             champ_pred = champ_model.predict(_align(X_ho, champion))
-            mask = np.ones(len(X_ho), dtype=bool)
             champ_end = pd.Timestamp(champion.train_end)
             targets = _target_times(X_ho)
             fair = np.asarray(targets >= champ_end)
@@ -188,13 +231,24 @@ def _retrain_locked(db: Session, reason: str, now: Optional[datetime]) -> dict:
                 eval_scope = "after_champion_train_end"
             champion_mae = _mae(y_ho[mask], champ_pred["p50"][mask])
             challenger_cmp = _mae(y_ho[mask], ch_pred["p50"][mask])
+            champion_bands = _band_quality(y_ho[mask], champ_pred.loc[mask])
+            if not champion_bands["valid"]:
+                champion_mae = None
         except Exception as e:  # feature set changed, file missing, ...
             logger.error("Champion %s could not be evaluated: %s", champion.version, e)
             champion_mae = None
 
-    promote = champion is None or champion_mae is None or (
+    challenger_bands = _band_quality(y_ho[mask], ch_pred.loc[mask])
+    band_checks = {"finite_ordered": _band_quality(y_ho, ch_pred)["valid"]}
+    if champion_bands is not None and champion_bands["valid"] and challenger_bands["valid"]:
+        band_checks.update(
+            coverage=challenger_bands["coverage"] >= champion_bands["coverage"] - 0.01,
+            interval_score=challenger_bands["interval_score"] <= champion_bands["interval_score"] * 1.02,
+            width=challenger_bands["mean_width"] <= champion_bands["mean_width"] * 1.10,
+        )
+    promote = all(band_checks.values()) and (champion is None or champion_mae is None or (
         challenger_cmp is not None and challenger_cmp < champion_mae
-    )
+    ))
     version = _new_version(now)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     path = str(MODEL_DIR / f"{version}.model")
@@ -208,12 +262,21 @@ def _retrain_locked(db: Session, reason: str, now: Optional[datetime]) -> dict:
         "champion_version": champion.version if champion is not None else None,
         "champion_eval_mae": champion_mae,
         "promoted": bool(promote),
+        "challenger_bands": challenger_bands,
+        "champion_bands": champion_bands,
+        "band_checks": band_checks,
+        "model_kind": "spike_mixture" if getattr(challenger, "spike_boosters", {}) else "quantile",
+        "spike_requested": bool(spike_mixture),
+        "spike_selection": spike_selection,
     }
 
     if promote:
         X_all = pd.concat([X_tr, X_ho])
         y_all = pd.concat([y_tr, y_ho])
-        final = PriceModel().fit(X_all, y_all, sample_weight=recency_weights(X_all, end))
+        # A fallback challenger without enough spike examples must remain a
+        # base model during the final refit, even if the holdout adds examples.
+        final = PriceModel(params={"spike_mixture": True}) if getattr(challenger, "spike_boosters", {}) else PriceModel()
+        final.fit(X_all, y_all, sample_weight=pd.Series(1.0, index=X_all.index))
         final.save(path)
         train_end = end
     else:

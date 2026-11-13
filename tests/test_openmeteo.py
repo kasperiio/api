@@ -134,3 +134,152 @@ def test_http_error_returns_empty_frame():
     assert list(df.columns) == ["timestamp", "series", "value"]
     df = OpenMeteoClient(session=FakeSession(fail=True)).fetch_historical_forecasts(START, END)
     assert df.empty
+
+
+# ---------------------------------------------------------------- previous runs
+
+ALL_SERIES = {S.TEMPERATURE_FORECAST_C, S.WIND_SPEED_100M_FORECAST_MS, S.SOLAR_RADIATION_FORECAST_WM2}
+
+
+def _raw(base_var, loc, hour):
+    """Deterministic, location-asymmetric raw value (same for every API / lead)."""
+    scale = {"temperature_2m": 1.0, "shortwave_radiation": 37.0, "wind_speed_100m": 0.7}[base_var]
+    return scale * ((loc * 7 + hour * 3) % 11) + 0.1 * loc
+
+
+class PrevRunsSession:
+    """Serves both the historical-forecast and previous-runs APIs from the same raw table.
+
+    previous_dayN values = raw + lead_offset * N. ``fail_start_dates`` -> HTTP 400 for
+    chunks starting on those dates; ``missing_leads`` -> variable absent from response;
+    ``null_leads`` -> variable present but all null.
+    """
+
+    def __init__(self, n_hours=4, lead_offset=0.0, fail_start_dates=(), missing_leads=(),
+                 null_leads=()):
+        self.calls = []
+        self.n = n_hours
+        self.lead_offset = lead_offset
+        self.fail_start_dates = set(fail_start_dates)
+        self.missing_leads = set(missing_leads)
+        self.null_leads = set(null_leads)
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url, dict(params)))
+        if params.get("start_date") in self.fail_start_dates:
+            return FakeResponse(400, {"error": True, "reason": "boom"})
+        times = _times(params.get("start_date", "2024-01-01") + "T00:00", self.n)
+        locs = []
+        for i, _ in enumerate(params["latitude"].split(",")):
+            vals = {}
+            for v in params["hourly"].split(","):
+                if "_previous_day" in v:
+                    base, lead = v.split("_previous_day")
+                    lead = int(lead)
+                    if lead in self.missing_leads:
+                        continue
+                    if lead in self.null_leads:
+                        vals[v] = [None] * self.n
+                        continue
+                    vals[v] = [_raw(base, i, h) + self.lead_offset * lead for h in range(self.n)]
+                else:
+                    vals[v] = [_raw(v, i, h) for h in range(self.n)]
+            locs.append(_location(times, vals))
+        return FakeResponse(200, locs if len(locs) > 1 else locs[0])
+
+
+P_START = datetime(2024, 6, 1, tzinfo=timezone.utc)
+P_END = datetime(2024, 6, 1, 4, tzinfo=timezone.utc)
+
+
+def test_previous_runs_long_format_all_leads():
+    session = PrevRunsSession(lead_offset=100.0)
+    df = OpenMeteoClient(session=session).fetch_previous_runs(P_START, P_END)
+    assert list(df.columns) == ["timestamp", "series", "lead_days", "value"]
+    assert str(df["timestamp"].dt.tz) == "UTC"
+    assert df["lead_days"].dtype.kind == "i"
+    assert sorted(df["lead_days"].unique()) == [1, 2, 3, 4, 5, 6, 7]
+    assert set(df["series"]) == ALL_SERIES
+    assert len(df) == 7 * 3 * 4  # leads x series x hours
+    assert not df.duplicated(["timestamp", "series", "lead_days"]).any()
+
+    # requests: one per point group, all previous_day1..7 variables of that group
+    assert len(session.calls) == 2
+    for url, params in session.calls:
+        assert url == OpenMeteoClient.PREVIOUS_RUNS_URL
+        assert params["timezone"] == "UTC" and params["wind_speed_unit"] == "ms"
+        assert params["start_date"] == params["end_date"] == "2024-06-01"
+        assert "models" not in params  # best_match default
+    hourly = sorted(v for _, p in session.calls for v in p["hourly"].split(","))
+    expected = sorted(f"{v}_previous_day{n}" for n in range(1, 8)
+                      for v in ("temperature_2m", "shortwave_radiation", "wind_speed_100m"))
+    assert hourly == expected
+    city_lats = [p["latitude"] for _, p in session.calls if "temperature_2m_previous_day1" in p["hourly"]]
+    assert len(city_lats[0].split(",")) == len(om.CITIES)
+
+    # values distinguish leads: lead N = lead-0 aggregate + 100*N (aggregates are means)
+    wide = df.pivot_table(index=["timestamp", "series"], columns="lead_days", values="value")
+    for n in range(2, 8):
+        assert ((wide[n] - wide[1]) - 100.0 * (n - 1)).abs().max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_previous_runs_aggregation_identical_to_historical():
+    """Same raw numbers -> identical aggregates (weights, means, missing handling)."""
+    session = PrevRunsSession(lead_offset=0.0)
+    client = OpenMeteoClient(session=session)
+    hist = client.fetch_historical_forecasts(P_START, P_END)
+    prev = client.fetch_previous_runs(P_START, P_END, lead_days=(1, 4, 7))
+    hist_wide = hist.pivot(index="timestamp", columns="series", values="value").sort_index()
+    for n in (1, 4, 7):
+        lead = prev[prev["lead_days"] == n]
+        lead_wide = lead.pivot(index="timestamp", columns="series", values="value").sort_index()
+        pd.testing.assert_frame_equal(lead_wide, hist_wide)
+    # and the temperature aggregate really is population-weighted (not a plain mean)
+    weights = [c[3] for c in om.CITIES]
+    t0 = hist_wide.index[0]
+    raw = [_raw("temperature_2m", i, 0) for i in range(len(om.CITIES))]
+    assert hist_wide.loc[t0, S.TEMPERATURE_FORECAST_C] == pytest.approx(
+        sum(r * w for r, w in zip(raw, weights)) / sum(weights))
+    assert hist_wide.loc[t0, S.TEMPERATURE_FORECAST_C] != pytest.approx(sum(raw) / len(raw))
+
+
+def test_previous_runs_chunks_and_skips_failing_chunk():
+    session = PrevRunsSession(fail_start_dates={"2024-04-01"})
+    df = OpenMeteoClient(session=session).fetch_previous_runs(
+        datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 10, 1, tzinfo=timezone.utc),
+        lead_days=(1, 2))
+    windows = sorted({(p["start_date"], p["end_date"]) for _, p in session.calls})
+    assert windows == [("2024-01-01", "2024-03-31"), ("2024-04-01", "2024-06-30"),
+                       ("2024-07-01", "2024-09-30")]
+    days = sorted(df["timestamp"].dt.strftime("%Y-%m-%d").unique())
+    assert days == ["2024-01-01", "2024-07-01"]  # fake serves n_hours from each chunk start
+    assert sorted(df["lead_days"].unique()) == [1, 2]
+
+
+def test_previous_runs_clips_to_data_start_and_now():
+    session = PrevRunsSession()
+    OpenMeteoClient(session=session).fetch_previous_runs(
+        datetime(2023, 1, 1, tzinfo=timezone.utc), datetime(2024, 2, 1, tzinfo=timezone.utc))
+    assert min(p["start_date"] for _, p in session.calls) == "2024-01-01"
+
+    session = PrevRunsSession()
+    future = pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=30)
+    df = OpenMeteoClient(session=session).fetch_previous_runs(future, future + pd.Timedelta(days=1))
+    assert df.empty and session.calls == []
+    assert list(df.columns) == ["timestamp", "series", "lead_days", "value"]
+
+
+def test_previous_runs_skips_unavailable_leads():
+    session = PrevRunsSession(missing_leads={6}, null_leads={7})
+    df = OpenMeteoClient(session=session).fetch_previous_runs(
+        P_START, P_END, lead_days=(1, 6, 7, 9))
+    assert sorted(df["lead_days"].unique()) == [1]
+    # lead 9 is never requested
+    assert not any("previous_day9" in p["hourly"] for _, p in session.calls)
+
+
+def test_previous_runs_all_chunks_fail_returns_empty():
+    df = OpenMeteoClient(session=PrevRunsSession(fail_start_dates={"2024-06-01"})).fetch_previous_runs(
+        P_START, P_END)
+    assert df.empty
+    assert list(df.columns) == ["timestamp", "series", "lead_days", "value"]

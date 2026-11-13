@@ -30,6 +30,10 @@ WIND_FORECAST_ENTSOE_MW = "wind_forecast_entsoe_mw"
 SOLAR_FORECAST_ENTSOE_MW = "solar_forecast_entsoe_mw"
 HYDRO_RESERVOIR_NO_MWH = "hydro_reservoir_no_mwh"
 HYDRO_RESERVOIR_SE_MWH = "hydro_reservoir_se_mwh"
+EUA_AUCTION_EUR_T = "eua_auction_eur_t"
+TRANSFER_CAPACITY_SERIES = tuple(
+    f"{zone.lower()}_fi_transfer_forecast_mw" for zone in ("EE", "SE1", "SE3")
+)
 
 # Bidding zones stored in spot_prices_raw
 ZONES = ("FI", "SE1", "SE3", "EE")

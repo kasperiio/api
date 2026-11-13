@@ -283,7 +283,7 @@ class EntsoeDataClient:
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(items))) as pool:
             return list(pool.map(fn, items))
 
-    def _get(self, params: Dict[str, str]) -> str:
+    def _get(self, params: Dict[str, str], binary: bool = False):
         if not self.api_key:
             raise EntsoeError("ENTSOE_API_KEY not configured")
         full = dict(params)
@@ -300,7 +300,7 @@ class EntsoeDataClient:
             parse_timeseries(resp.text, "quantity")  # raises EntsoeNoData
         if resp.status_code != 200:
             raise EntsoeError("ENTSO-E HTTP %s" % resp.status_code)
-        return resp.text
+        return resp.content if binary else resp.text
 
     def _chunks(self, start: pd.Timestamp, end: pd.Timestamp):
         cur = start
@@ -324,6 +324,30 @@ class EntsoeDataClient:
         return parsed
 
     # -- Public API ---------------------------------------------------------
+
+    def fetch_outages(self, start: datetime, end: datetime) -> pd.DataFrame:
+        from app.forecasting.sources.entsoe_outages import fetch_outages
+        return fetch_outages(self, start, end)
+
+    def fetch_transfer_capacities(self, start: datetime, end: datetime) -> pd.DataFrame:
+        """Day-ahead estimated NTC into Finland; missing borders stay absent.
+
+        Historical publications may be revised, like other archived day-ahead
+        drivers. Live issue snapshots are preferred by the feature pipeline.
+        """
+        t0, t1 = _utc_bounds(start, end)
+
+        def fetch(item):
+            zone, name = item
+            params = {"documentType": "A61", "contract_MarketAgreement.type": "A01",
+                      "out_Domain": ZONE_EIC[zone], "in_Domain": ZONE_EIC["FI"]}
+            parsed = self._query(params, "quantity", t0, t1)
+            frame = _to_hourly([p for ts in parsed for p in ts["points"]], name)
+            return frame[(frame.timestamp >= t0) & (frame.timestamp < t1)]
+
+        frames = self._map(fetch, list(zip(("EE", "SE1", "SE3"), S.TRANSFER_CAPACITY_SERIES)))
+        frames = [f for f in frames if not f.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=DRIVER_COLUMNS)
 
     def fetch_prices(self, start: datetime, end: datetime, zones=("FI", "SE1", "SE3", "EE")) -> pd.DataFrame:
         """Price frame (timestamp, zone, price_eur_mwh, resolution_minutes) for [start, end)."""

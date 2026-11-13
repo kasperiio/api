@@ -273,6 +273,19 @@ def test_fetch_forecasts_only_forecast_series():
     assert "A72" not in {c_.kwargs["params"]["documentType"] for c_ in session.get.call_args_list}
 
 
+def test_transfer_capacities_query_import_direction_and_daily_contract():
+    c, session = _client(lambda *args, **kwargs: _resp(LOAD_XML))
+    start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, 2, tzinfo=UTC)
+    frame = c.fetch_transfer_capacities(start, end)
+    assert set(frame.series) == set(S.TRANSFER_CAPACITY_SERIES)
+    for call in session.get.call_args_list:
+        params = call.kwargs["params"]
+        assert params["documentType"] == "A61"
+        assert params["contract_MarketAgreement.type"] == "A01"
+        assert params["in_Domain"] == E.ZONE_EIC["FI"]
+        assert params["out_Domain"] in {E.ZONE_EIC[z] for z in ("EE", "SE1", "SE3")}
+
+
 def test_weekly_ffill_limited_extension():
     parsed = parse_timeseries(RES_NO_XML, "quantity")
     t0, t1 = pd.Timestamp("2025-12-22T00:00Z"), pd.Timestamp("2026-03-01T00:00Z")

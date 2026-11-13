@@ -102,7 +102,7 @@ def _daily_refresh(db) -> dict:
             out["retrain"] = "cooldown"
         else:
             logger.warning("Drift detected (%s); retraining", drift)
-            out["retrain"] = training.retrain(db, "drift")
+            out["retrain"] = training.retrain(db, "drift", spike_mixture=True)
             if out["retrain"].get("activated"):
                 training.predict_and_store(db)
     return out
@@ -125,7 +125,7 @@ def _predict(db) -> dict:
 
 
 def _weekly_retrain(db) -> dict:
-    result = training.retrain(db, "weekly")
+    result = training.retrain(db, "weekly", spike_mixture=True)
     if result.get("activated"):
         training.predict_and_store(db)
     return result
