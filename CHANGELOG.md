@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/kasperiio/api/compare/v3.0.5...v3.1.0) (2026-11-13)
+
+
+### Features
+
+* add self-learning electricity price forecasts ([0629fdd](https://github.com/kasperiio/api/commit/0629fddf7cf1d3055fc771440d1090ded7ef0b2b))
+
 ## [3.0.5](https://github.com/kasperiio/api/compare/v3.0.4...v3.0.5) (2025-10-16)
 
 
