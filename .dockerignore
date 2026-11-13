@@ -1,0 +1,12 @@
+# Secrets come from the environment, data from the mounted volume
+.env
+data/
+venv/
+.git/
+.github/
+.idea/
+.vscode/
+**/__pycache__/
+tests/
+*.db
+*.db.gz

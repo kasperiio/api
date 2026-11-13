@@ -8,6 +8,7 @@ services:
       - "8000:8000"
     environment:
       - ENTSOE_API_KEY=API_KEY_HERE
+      - FINGRID_API_KEY=API_KEY_HERE
       - TZ=Europe/Helsinki
     volumes:
       - ./data:/app/data
